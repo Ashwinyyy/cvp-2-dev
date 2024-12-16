@@ -1,0 +1,186 @@
+import os
+import json
+import boto3
+from botocore.exceptions import ClientError
+from datetime import datetime
+from hashlib import md5
+
+# Initialize Boto3 clients
+s3_client = boto3.client('s3')
+ses_client = boto3.client('ses')  # Specify the AWS region from environment variable
+logs_client = boto3.client('logs')
+
+# Email settings from environment variables
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
+CC_EMAIL = os.getenv("CC_EMAIL").split(',') 
+
+# S3 and processing configuration
+BUCKET_NAME = os.getenv('BUCKET_NAME')
+FOLDER_PREFIX = os.getenv('FOLDER_PREFIX')  # 'Adverse_reaction_reports/report_details_output_'
+BATCH_SIZE = 8000  # Maximum number of rows to print per email
+
+def fetch_s3_file(bucket_name, file_key):
+    """Fetches JSON file from S3 bucket and parses it in chunks if large."""
+    try:
+        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
+        body_content = response['Body'].read().decode('utf-8')
+
+        if not body_content:
+            print(f"Warning: Empty content retrieved from {file_key}.")
+            return None
+
+        return json.loads(body_content)
+    except ClientError as e:
+        print(f"Error fetching the file: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"JSONDecodeError: {e}. Content: {body_content}")
+        return None
+
+def delete_s3_file(bucket_name, file_key):
+    """Deletes a file from the S3 bucket."""
+    try:
+        s3_client.delete_object(Bucket=bucket_name, Key=file_key)
+        print(f"Deleted {file_key} from {bucket_name}.")
+    except ClientError as e:
+        print(f"Error deleting the file: {e}")
+
+def get_latest_files(bucket_name, folder_prefix):
+    """Fetches the two most recent files based on LastModified date from the specified folder in S3."""
+    try:
+        response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=folder_prefix)
+        files = response.get('Contents', [])
+
+        # Sort files by last modified date and return keys of two most recent files
+        files.sort(key=lambda x: x['LastModified'], reverse=True)
+        return [file['Key'] for file in files[:2]]
+    except ClientError as e:
+        print(f"Error fetching the file list: {e}")
+        return []
+
+def format_adverse_reactions(pt_name):
+    """Format adverse reactions by removing spaces."""
+    return ', '.join(part.strip().replace(' ', '') for part in pt_name.split(','))
+
+def generate_email_body(data, previously_updated_date, sent_date, start_serial_number):
+    """Generates HTML email body with a single table including all entries."""
+    html_body = f"""
+    <html>
+    <body>
+        <h2 style="color: black; text-align: center; font-size: 24px;">Adverse Reaction Report - Alert</h2>
+        <p style="color: black;">This email contains the results from the extraction of Adverse Reaction Report associated with respective drug names given. Below are the details:</p>
+        <p style="color: black;">The alert results cover a screening period between <strong>{previously_updated_date}</strong> & <strong>{sent_date}</strong>.</p>
+        <table border="1" cellpadding="5" cellspacing="0">
+            <tr>
+                <th style="color: black;">Sl.No</th>
+                <th style="color: black;">Adverse Reaction Report Number</th>
+                <th style="color: black;">Market Authorization Holder AER Number</th>
+                <th style="color: black;">Initial Received Date</th>
+                <th style="color: black;">Age</th>
+                <th style="color: black;">Gender</th>
+                <th style="color: black;">Suspected Product Brand Name</th>
+                <th style="color: black;">Adverse Reaction Terms</th>
+            </tr>
+    """
+
+    # Add each report as a row with a serial number, alternating row colors
+    for idx, report in enumerate(data, start=start_serial_number):
+        formatted_reactions = format_adverse_reactions(report['pt_name'])
+        row_color = "#f2f2f2" if idx % 2 == 0 else "#ffffff"
+        age = f"{int(report.get('age_y', 'N/A'))} years" if isinstance(report.get('age_y', 'N/A'), float) else report.get('age_y', 'N/A')
+        
+        html_body += f"""
+            <tr style="background-color: {row_color};">
+                <td style="color: black;">{idx}</td>
+                <td style="color: black;">{report['report_no']}</td>
+                <td style="color: black;">{report.get('mah_no', 'N/A')}</td>
+                <td style="color: black;">{report['date_int_received']}</td>
+                <td style="color: black;">{age}</td>
+                <td style="color: black;">{report['gender_name']}</td>
+                <td style="color: black;">{report['drug_name']}</td>
+                <td style="color: black;">{formatted_reactions}</td>
+            </tr>
+        """
+
+    html_body += """
+        </table>
+    </body>
+    </html>
+    """
+    return html_body
+
+def send_email(subject, body_html):
+    """Sends an email using SES."""
+    try:
+        response = ses_client.send_email(
+            Source=SENDER_EMAIL,
+            Destination={
+                'ToAddresses': [RECIPIENT_EMAIL],
+                # 'CcAddresses': CC_EMAIL  # Add CC email handling here
+            },
+            Message={
+                'Subject': {'Data': subject},
+                'Body': {'Html': {'Data': body_html}}
+            }
+        )
+        print(f"Email sent! Message ID: {response['MessageId']}")
+    except ClientError as e:
+        print(f"Error sending email: {e}")
+
+def find_new_entries(previous_data, current_data):
+    """Finds new entries in the current data that are not in the previous data using hashes."""
+    previous_set = {md5(json.dumps(item, sort_keys=True).encode()).hexdigest() for item in previous_data}
+    new_entries = [entry for entry in current_data if md5(json.dumps(entry, sort_keys=True).encode()).hexdigest() not in previous_set]
+    return new_entries
+
+def get_last_updated_date(log_group_name):
+    """Fetch the last updated date from CloudWatch logs."""
+    try:
+        response = logs_client.describe_log_streams(
+            logGroupName=log_group_name,
+            orderBy='LastEventTime',
+            descending=True,
+            limit=1
+        )
+        if 'logStreams' in response and response['logStreams']:
+            last_log_stream = response['logStreams'][0]
+            last_event_time = last_log_stream.get('lastEventTimestamp')
+            return datetime.fromtimestamp(last_event_time / 1000).strftime('%Y-%m-%d %H:%M:%S') if last_event_time else "N/A"
+        return "N/A"
+    except ClientError as e:
+        print(f"Error fetching last updated date from CloudWatch logs: {e}")
+        return "N/A"
+
+def lambda_handler(event, context):
+    """Main Lambda handler."""
+    latest_files = get_latest_files(BUCKET_NAME, FOLDER_PREFIX)
+    if not latest_files:
+        print("No files found in the specified folder.")
+        return {'statusCode': 200, 'body': 'No files found in the specified folder.'}
+
+    previous_data, current_data = [], fetch_s3_file(BUCKET_NAME, latest_files[0])
+    if len(latest_files) > 1:
+        previous_data = fetch_s3_file(BUCKET_NAME, latest_files[1])
+    new_entries = find_new_entries(previous_data, current_data or [])
+    
+    if not new_entries:
+        print("No new entries to report.")
+        return {'statusCode': 200, 'body': 'No new entries to report.'}
+
+    previously_updated_date = get_last_updated_date('/aws/lambda/CVP_Lambda2_Email')
+    sent_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    total_entries = len(new_entries)
+    total_pages = (total_entries + BATCH_SIZE - 1) // BATCH_SIZE
+
+    for page in range(total_pages):
+        batch_start, batch_end = page * BATCH_SIZE, (page + 1) * BATCH_SIZE
+        current_email_body = generate_email_body(new_entries[batch_start:batch_end], previously_updated_date, sent_date, batch_start + 1)
+        subject = f"Adverse Reaction Alert - Page {page + 1} of {total_pages}"
+        send_email(subject, current_email_body)
+
+    if len(latest_files) > 1:
+        delete_s3_file(BUCKET_NAME, latest_files[1])
+
+    return {'statusCode': 200, 'body': 'Emails sent for new entries and old file deleted.'}

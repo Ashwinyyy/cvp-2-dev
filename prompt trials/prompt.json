@@ -1,0 +1,191 @@
+input bucket: cvp-2-bucket
+output bucket: cvp-2-output
+
+1.Read and parse drug names from the Input_data/Suspected _Product _Brand_Name/drug_names.txt file located in the cvp-2-bucket on S3.
+THE DRUG NAMES IN .TXT FILES WILL BE IN THE FOLLWING FORMAT
+drug_names.txt
+PANZYGA
+Octagam
+
+it shouldnt be case sensitive, als it shuld tlerate empty lines n skip it. 
+reports.txt, reactions.txt, report_links.txt, report_drug.txt,report_drug_indication.txt are presnet in cvp-2-bucket Input_data/report_id_database/
+that is Input_data/report_id_database/reports.txt,Input_data/report_id_database/report_links.txt,Input_data/report_id_database/report_drug.txt,Input_data/report_id_database/ reactions.txt,Input_data/report_id_database/report_drug_indication.txt
+
+2.For each drug name, search for the corresponding REPORT_ID in the report_drug.txt file. and keep them aside because we use that report id 
+
+3.the contents in the reports.txt, reactions.txt, report_links.txt, report_drug.txt,report_drug_indication.txt is as fllwoing. pls dont create pythn code tailered to the following output . it purely for reference and your understandign so you culd create a python file easily so i coudl run in pycharm
+reports.txt
+"905905528"$"E2B_05905528"$"2"$"24-JAN-23"$"09-SEP-22"$"2022TUS061423"$"7"$"Spontaneous"$"Déclaration spontanée"$"1"$"Male"$"Masculin"$"27"$"27"$"Years"$"Années"$"07"$"Recovered/resolved"$"Guérison"$"55"$"Kilogram"$"Kilogramme"$"168"$"Centimeter"$"Centimètres"$"01"$"Serious"$"Grave"$"2"$"2"$"2"$"2"$"2"$"1"$"Other health professional"$"Autre professionnel de santé"$"07"$"MAH"$"Fabricant"$"CA-TAKEDA-2022TUS061423"$""$"CA-TAKEDA-2022TUS061423"
+
+Reactions.txt
+"90590552804"$"905905528"$"1"$"Days"$"Jour(s)"$"Back pain"$"Dorsalgie"$"Musculoskeletal and connective tissue disorders"$"Affections musculosquelettiques et du tissu conjonctif"$"v.27.1"
+"90590552801"$"905905528"$""$""$""$"Febrile nonhaemolytic transfusion reaction"$"Réaction non hémolytique fébrile à la transfusion"$"Injury, poisoning and procedural complications"$"Lésions, intoxications et complications d'interventions"$"v.27.1"
+"90590552802"$"905905528"$""$""$""$"Oxygen therapy"$"Traitement par oxygène"$"Surgical and medical procedures"$"Actes médicaux et chirurgicaux"$"v.27.1"
+"90590552803"$"905905528"$""$""$""$"Hypoxia"$"Hypoxie"$"Respiratory, thoracic and mediastinal disorders"$"Affections respiratoires, thoraciques et médiastinales"$"v.27.1"
+"90590552809"$"905905528"$""$""$""$"Oxygen saturation decreased"$"Saturation en oxygène diminuée"$"Investigations"$"Investigations"$"v.27.1"
+"90590552805"$"905905528"$""$""$""$"Body temperature increased"$"Température augmentée"$"Investigations"$"Investigations"$"v.27.1"
+"90590552806"$"905905528"$""$""$""$"Chills"$"Frissons"$"General disorders and administration site conditions"$"Troubles généraux et anomalies au site d'administration"$"v.27.1"
+"90590552807"$"905905528"$""$""$""$"Hypertension"$"Hypertension"$"Vascular disorders"$"Affections vasculaires"$"v.27.1"
+"90590552808"$"905905528"$""$""$""$"Tachycardia"$"Tachycardie"$"Cardiac disorders"$"Affections cardiaques"$"v.27.1"
+
+Report_Links.txt
+"6895302"$"689530"$"Duplicate"$"Doublon"$"E2B_01090862"
+
+Report_Drug.txt
+"690445"$"905905528"$"8777"$"GAMMAGARD LIQUID ALSO KNOW AS IMMUNE GLOBULIN (HUMAN)"$"Suspect"$"Suspect"$"Intravenous (not otherwise specified)"$"Intraveineuse (sans autre précision)"$"30"$"Gram"$"Gramme"$"1"$"1"$"Days"$"Jour(s)"$"1 every 1 Days"$"1 chaque 1 Jour(s)"$"1440"$"Minutes"$"Minute(s)"$"SOLUTION INTRAVENOUS"$"SOLUTION POUR ADMINISTRATION INTRAVEINEUSE"
+"690447"$"905905528"$"32325"$"OCTAGAM"$"Suspect"$"Suspect"$"Unknown"$"Inconnu"$"20"$"Gram"$"Gramme"$""$""$""$""$""$""$""$""$""$"SOLUTION INTRAVENOUS"$"SOLUTION POUR ADMINISTRATION INTRAVEINEUSE"
+"690449"$"905905528"$"25737"$"VENTOLIN"$"Concomitant"$"Concomitant"$""$""$"2"$"Dosage forms"$"Formes de dosage"$""$""$""$""$""$""$""$""$""$""$""
+"690451"$"905905528"$"39146"$"DEXPANTHENOL/ERGOCALCIFEROL/FOLIC ACID/NICOTINAMIDE/RIBOFLAVIN/THIAMINE HYDROCHLORIDE/VITAMIN A/VITAMIN C"$"Concomitant"$"Concomitant"$""$""$""$""$""$""$""$""$""$""$""$""$""$""$""$""
+"690442"$"905905528"$"8777"$"GAMMAGARD LIQUID ALSO KNOW AS IMMUNE GLOBULIN (HUMAN)"$"Suspect"$"Suspect"$"Intravenous (not otherwise specified)"$"Intraveineuse (sans autre précision)"$"150"$"ml"$"ml"$""$""$""$""$""$""$""$""$""$"Solution for infusion"$"Solution pour perfusion"
+"690446"$"905905528"$"8777"$"GAMMAGARD LIQUID ALSO KNOW AS IMMUNE GLOBULIN (HUMAN)"$"Suspect"$"Suspect"$"Intravenous (not otherwise specified)"$"Intraveineuse (sans autre précision)"$"115"$"ml"$"ml"$"1"$"1"$"Days"$"Jour(s)"$"1 every 1 Days"$"1 chaque 1 Jour(s)"$"1440"$"Minutes"$"Minute(s)"$"Solution for infusion"$"Solution pour perfusion"
+"690448"$"905905528"$"25737"$"VENTOLIN"$"Concomitant"$"Concomitant"$""$""$"2"$"Dosage forms"$"Formes de dosage"$"2"$"1"$"Days"$"Jour(s)"$"2 every 1 Days"$"2 chaque 1 Jour(s)"$""$""$""$"NOT SPECIFIED"$"NON PRÉCISÉE"
+"690450"$"905905528"$"31162"$"FLOVENT"$"Concomitant"$"Concomitant"$""$""$"2"$"Dosage forms"$"Formes de dosage"$"2"$"1"$"Days"$"Jour(s)"$"2 every 1 Days"$"2 chaque 1 Jour(s)"$""$""$""$"NOT SPECIFIED"$"NON PRÉCISÉE"
+"690444"$"905905528"$"8777"$"GAMMAGARD LIQUID ALSO KNOW AS IMMUNE GLOBULIN (HUMAN)"$"Suspect"$"Suspect"$"Intravenous (not otherwise specified)"$"Intraveineuse (sans autre précision)"$"30"$"Gram"$"Gramme"$"1"$"1"$"Days"$"Jour(s)"$"1 every 1 Days"$"1 chaque 1 Jour(s)"$""$""$""$"Solution for infusion"$"Solution pour perfusion"
+"690443"$"905905528"$"8777"$"GAMMAGARD LIQUID ALSO KNOW AS IMMUNE GLOBULIN (HUMAN)"$"Suspect"$"Suspect"$"Intravenous (not otherwise specified)"$"Intraveineuse (sans autre précision)"$"30"$"Gram"$"Gramme"$"1"$"1"$"Days"$"Jour(s)"$"1 every 1 Days"$"1 chaque 1 Jour(s)"$"1"$"Days"$"Jour(s)"$"Solution for infusion"$"Solution pour perfusion"
+
+Report_Drug_Indication.txt
+"690446"$"905905528"$"8777"$"GAMMAGARD LIQUID ALSO KNOW AS IMMUNE GLOBULIN (HUMAN)"$"Immunodeficiency"$"Déficit immunitaire"
+"690444"$"905905528"$"8777"$"GAMMAGARD LIQUID ALSO KNOW AS IMMUNE GLOBULIN (HUMAN)"$"Immunodeficiency"$"Déficit immunitaire"
+"690445"$"905905528"$"8777"$"GAMMAGARD LIQUID ALSO KNOW AS IMMUNE GLOBULIN (HUMAN)"$"Immunodeficiency"$"Déficit immunitaire"
+"690443"$"905905528"$"8777"$"GAMMAGARD LIQUID ALSO KNOW AS IMMUNE GLOBULIN (HUMAN)"$"Immunodeficiency"$"Déficit immunitaire"
+"690442"$"905905528"$"8777"$"GAMMAGARD LIQUID ALSO KNOW AS IMMUNE GLOBULIN (HUMAN)"$"Immunodeficiency"$"Déficit immunitaire"
+"690447"$"905905528"$"32325"$"OCTAGAM"$"Product used for unknown indication"$"Produit utilisé pour une indication inconnue"
+
+4.With the REPORT_ID, go through the other files (reports.txt, reactions.txt, report_links.txt, report_drug.txt,report_drug_indication.txt) and fetch only required details based on the field mappings.
+Here is the list of the required variables with their corresponding field numbers based on the text file headings provided:
+weneed all the mentioned fields matched varibales under all the .txt file smentioned below
+i need al txt files mentioned with its own vairbales field matched reports.txt,Reactions.txt,Report_Links.txt,Report_Drug.txt,
+Report_Drug_Indication.txt
+Fetch and map the relevant fields from the files: reports.txt, reactions.txt, report_links.txt, report_drug.txt, and report_drug_indication.txt, based on the provided field mappings.
+
+reports.txt
+Adverse Reaction Report id: REPORT_ID (fields[0])
+Adverse Reaction Report Number: REPORT_NO (fields[1])
+Latest AER Version Number: VERSION_NO (fields[2])
+Initial Received Date: DATINTRECEIVED (fields[4])
+Latest Received Date: DATRECEIVED (fields[3])
+Source of Report: SOURCE_ENG (fields[37])
+Market Authorization Holder AER Number: MAH_NO (fields[5])
+Type of Report: REPORT_TYPE_ENG (fields[7])
+Reporter Type: REPORTER_TYPE_ENG (fields[34])
+Serious report: SERIOUSNESS_ENG (fields[26])
+Death: DEATH (fields[28])
+Disability: DISABILITY (fields[29])
+Congenital Anomaly: CONGENITAL_ANOMALY (fields[30])
+Serious Life Threatening: LIFE_THREATENING (fields[31])
+Hospitalization: HOSP_REQUIRED (fields[32])
+Other Medically Important Conditions: OTHER_MEDICALLY_IMP_COND (fields[33])
+Age: AGE (fields[12])
+Gender: GENDER_ENG (fields[10])
+Height: HEIGHT (fields[22])
+Weight: WEIGHT (fields[19])
+Report Outcome: OUTCOME_ENG (fields[17])
+
+Reactions.txt
+Adverse Reaction Report id: REPORT_ID (fields[1])
+Adverse Reaction Term(s): REACTION_ENG (fields[3])
+MedDRA Version: VERSION (fields[10])
+Reaction Duration: DURATION (fields[9])
+
+Report_Links.txt
+Adverse Reaction Report id: REPORT_ID (fields[1])
+Record Type: LINK_TYPE_ENG (fields[2])
+Link AER Number: E2B_REPORT_NO (fields[4])
+
+Report_Drug.txt
+Adverse Reaction Report id: REPORT_ID (fields[1])
+Product Description: DRUG_NAME_ENG (fields[3])
+Health Product Role: DRUG_TYPE_ENG (fields[5])
+Dosage Form: DOSE_UNIT_ENG (fields[8])
+Route of Administration: ROUTE_ENG (fields[16])
+Dose: DOSE (fields[7])
+Frequency: FREQ (fields[10])
+Therapy Duration: DURATION (fields[13])
+
+Report_Drug_Indication.txt
+Adverse Reaction Report id: REPORT_ID (fields[1])
+Indication(s): INDICATION_ENG (fields[4])
+
+5.Create an output JSON file containing all the required information (the above  mentioned list). and save it cvp-2-output s3 bucket 
+the output should be like this: OUTPUT BUCKET: cvp-2-output
+[
+    
+        {
+          "report_id": "{{REPORT_ID}}",
+          "report_no": "{{report_no}}",
+          "version_no": "{{version_no}}",
+          "datintreceived": "{{datintreceived}}",
+          "datreceived": "{{datreceived}}",
+          "source_eng": "{{source_eng}}",
+          "mah_no": "{{mah_no}}",
+          "report_type_eng": "{{report_type_eng}}",
+          "reporter_type_eng": "{{reporter_type_eng}}",
+          "seriousness_eng": "{{seriousness_eng}}",
+          "death": "{{death}}",
+          "disability": "{{disability}}",
+          "congenital_anomaly": "{{congenital_anomaly}}",
+          "life_threatening": "{{life_threatening}}",
+          "hospitalization": "{{hospitalization}}",
+          "other_medically_imp_cond": "{{other_medically_imp_cond}}",
+          "age": "{{age}}",
+          "gender_eng": "{{gender_eng}}",
+          "height": "{{height}}",
+          "weight": "{{weight}}",
+          "outcome_eng": "{{outcome_eng}}",
+          "reaction_eng": "{{reaction_eng}}",
+          "version": "{{version}}",
+          "duration": "{{duration}}",
+          "link_type_eng": "{{link_type_eng}}",
+          "e2b_report_no": "{{e2b_report_no}}",
+          "drug_name_eng": "{{drug_name_eng}}",
+          "drug_type_eng": "{{drug_type_eng}}",
+          "dose_unit_eng": "{{dose_unit_eng}}",
+          "route_eng": "{{route_eng}}",
+          "dose": "{{dose}}",
+          "freq": "{{freq}}",
+          "therapy_duration": "{{therapy_duration}}",
+          "indication_eng": "{{indication_eng}}"
+        }
+      
+      
+,
+{
+    "report_id": "{{REPORT_ID}}",
+    "report_no": "{{report_no}}",
+    "version_no": "{{version_no}}",
+    "datintreceived": "{{datintreceived}}",
+    "datreceived": "{{datreceived}}",
+    "source_eng": "{{source_eng}}",
+    "mah_no": "{{mah_no}}",
+    "report_type_eng": "{{report_type_eng}}",
+    "reporter_type_eng": "{{reporter_type_eng}}",
+    "seriousness_eng": "{{seriousness_eng}}",
+    "death": "{{death}}",
+    "disability": "{{disability}}",
+    "congenital_anomaly": "{{congenital_anomaly}}",
+    "life_threatening": "{{life_threatening}}",
+    "hospitalization": "{{hospitalization}}",
+    "other_medically_imp_cond": "{{other_medically_imp_cond}}",
+    "age": "{{age}}",
+    "gender_eng": "{{gender_eng}}",
+    "height": "{{height}}",
+    "weight": "{{weight}}",
+    "outcome_eng": "{{outcome_eng}}",
+    "reaction_eng": "{{reaction_eng}}",
+    "version": "{{version}}",
+    "duration": "{{duration}}",
+    "link_type_eng": "{{link_type_eng}}",
+    "e2b_report_no": "{{e2b_report_no}}",
+    "drug_name_eng": "{{drug_name_eng}}",
+    "drug_type_eng": "{{drug_type_eng}}",
+    "dose_unit_eng": "{{dose_unit_eng}}",
+    "route_eng": "{{route_eng}}",
+    "dose": "{{dose}}",
+    "freq": "{{freq}}",
+    "therapy_duration": "{{therapy_duration}}",
+    "indication_eng": "{{indication_eng}}"
+  }
+
+	
+....
+]	

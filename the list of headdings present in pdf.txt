@@ -1,0 +1,55 @@
+Canada Vigilance
+Summary of Reported Adverse Reaction
+------------------------------------------------
+
+---Report Information---
+Adverse Reaction Report Number
+Latest AER Version Number
+Initial Received Date 
+Latest Received Date 
+Source of Report
+Market Authorization Holder AER Number
+Type of Report 
+Reporter Type
+
+Serious report
+
+Death 
+Disability
+Congenital Anomaly
+Serious Life Threatening
+Hospitalization
+Other Medically Important Conditions
+
+--Patient Information---
+Age 
+Gender 
+Height 
+Weight 
+Report Outcome
+
+---Link / Duplicate Report Information---
+Record Type 
+Link AER** Number   **AER = Adverse Reaction Report
+
+---Product Information---
+Product Description 
+Health Product Role 
+Dosage Form 
+Route of Administration 
+Dose 
+Frequency 
+Therapy Duration 
+Indication(s)
+
+---Adverse Reaction Term Information---
+Adverse Reaction Term(s) 
+MedDRA Version 
+Reaction Duration
+
+
+Report Runtime:2024-10-08 - 03:32:54 PM
+Initial Received Date:2022-05-01 to 2024-05-30
+Latest Received Date:N/A
+Total Number of Reports:14 Report(s)
+

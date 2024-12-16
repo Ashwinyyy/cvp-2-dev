@@ -1,0 +1,80 @@
+import boto3
+import os
+import requests
+import zipfile
+import shutil
+
+# Initialize S3 client
+s3_client = boto3.client('s3')
+
+# Environment Variables (Set these in Lambda configuration)
+bucket_name = os.getenv('Bucket_name')
+report_folder = os.getenv("report_folder")
+zip_url = os.getenv("zip_url")
+
+
+# Function to download the ZIP file
+def download_zip_file():
+    zip_name = os.path.basename(zip_url)
+    print(f"Downloading {zip_name}...")
+    response = requests.get(zip_url, stream=True)
+    response.raise_for_status()
+
+    zip_path = f"/tmp/{zip_name}"
+    with open(zip_path, 'wb') as f:
+        f.write(response.content)
+    print(f"File downloaded successfully: {zip_name}")
+    return zip_path
+
+# Function to check for new data and extract files
+def check_for_new_data():
+    # Download the ZIP file to /tmp directory
+    zip_path = download_zip_file()
+    
+    print("Extracting the ZIP file...")
+
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall("/tmp")
+
+    # Always copy report_drug.txt to the S3 Input_data folder
+    copy_report_file()
+
+    # After processing, clean up /tmp folder
+    cleanup_tmp_folder()
+
+# Function to copy report_drug.txt to S3
+def copy_report_file():
+    drug_report_path = "/tmp/cvponline_extract_20240630/report_drug.txt"
+
+    try:
+        # Upload report_drug.txt to S3 bucket in Input_data folder
+        s3_client.upload_file(
+            Filename=drug_report_path,
+            Bucket=bucket_name,
+            Key=f"{report_folder}report_drug.txt"
+        )
+        
+        print(f"Copied report_drug.txt to Input_data/report_drug.txt in S3")
+    except FileNotFoundError:
+        print(f"report_drug.txt not found at {drug_report_path}. Skipping copy.")
+
+# Function to clean up /tmp folder
+def cleanup_tmp_folder():
+    tmp_folder = "/tmp/"
+    try:
+        for root, dirs, files in os.walk(tmp_folder):
+            for file in files:
+                file_path = os.path.join(root, file)
+                print(f"Deleting {file_path}...")
+                os.remove(file_path)
+        print(f"All files in {tmp_folder} deleted.")
+    except Exception as e:
+        print(f"Error deleting files from /tmp: {e}")
+
+# Lambda handler function
+def lambda_handler(event, context):
+    check_for_new_data()
+    return {
+        'statusCode': 200,
+        'body': 'Process completed successfully.'
+    }
