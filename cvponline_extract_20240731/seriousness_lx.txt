@@ -1,0 +1,2 @@
+"2001"$"01"$"Serious"$"Grave"
+"2002"$"02"$"Not Serious"$"Non grave"
