@@ -1,6 +1,0 @@
-"1906"$"06"$"Unknown"$"Inconnue"
-"1907"$"07"$"Recovered/resolved"$"Guérison"
-"1908"$"08"$"Recovering/resolving"$"Guérison en cours"
-"1909"$"09"$"Not recovered/not resolved"$"Non rétabli/Non résolu"
-"1910"$"10"$"Recovered/resolved with sequelae"$"Guérison avec séquelles"
-"1911"$"11"$"Fatal"$"Fatale"
