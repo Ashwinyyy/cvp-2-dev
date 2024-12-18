@@ -1,42 +1,50 @@
-
 import boto3
 import json
 import logging
 from collections import defaultdict
-import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+import asyncio
+import aioboto3
+import threading
 
 # Initialize logging and S3 client
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-s3_client = boto3.client('s3')
 
 # Input and output S3 buckets
 input_bucket = 'cvp-2-bucket'
 output_bucket = 'cvp-2-output-2-testing'
 
 # File paths in S3
-drug_names_file = 'Input_data/Suspected_Product_Brand_Name/drug_names.txt'
-report_drug_file = 'Input_data/report_id_database/report_drug.txt'
-reports_file = 'Input_data/report_id_database/reports.txt'
-reactions_file = 'Input_data/report_id_database/reactions.txt'
-report_links_file = 'Input_data/report_id_database/report_links.txt'
-report_drug_indication_file = 'Input_data/report_id_database/report_drug_indication.txt'
+files_to_read = [
+    'Input_data/Suspected_Product_Brand_Name/drug_names.txt',
+    'Input_data/report_id_database/report_drug.txt',
+    'Input_data/report_id_database/reports.txt',
+    'Input_data/report_id_database/reactions.txt',
+    'Input_data/report_id_database/report_links.txt',
+    'Input_data/report_id_database/report_drug_indication.txt'
+]
 
+# Function to read files from S3 asynchronously using aioboto3
+async def read_s3_file_async(bucket, key):
+    async with aioboto3.Session().client('s3') as s3_client:
+        try:
+            logging.info(f"Attempting to read S3 file {key} from bucket {bucket} asynchronously...")
+            response = await s3_client.get_object(Bucket=bucket, Key=key)
+            content = await response['Body'].read()
+            logging.info(f"Successfully read S3 file {key}.")
+            return content.decode('utf-8').splitlines()
+        except Exception as e:
+            logging.error(f"Error reading S3 file {key} from bucket {bucket}: {e}")
+            return []
 
-# Function to read files from S3
-def read_s3_file(bucket, key):
-    try:
-        logging.info(f"Attempting to read S3 file {key} from bucket {bucket}...")
-        response = s3_client.get_object(Bucket=bucket, Key=key)
-        logging.info(f"Successfully read S3 file {key} from bucket {bucket}.")
-        return response['Body'].read().decode('utf-8').splitlines()
-    except Exception as e:
-        logging.error(f"Error reading S3 file {key} from bucket {bucket}: {e}")
-        return []
+# Main function to read all files concurrently
+async def read_all_files():
+    tasks = [read_s3_file_async(input_bucket, file) for file in files_to_read]
+    file_contents = await asyncio.gather(*tasks)
+    return file_contents
 
-
-#converting date format
+# Converting date format
 def convert_date_format(date_str):
     try:
         # Convert the date string from 'DD-MMM-YY' to 'YYYY-MM-DD'
@@ -46,7 +54,7 @@ def convert_date_format(date_str):
         # Return the original string if it doesn't match the expected format
         return date_str
 
-#coverting 1 to yes, 2 to no
+# Converting 1 to yes, 2 to no
 def convert_to_yes_no(value):
     if value == "1":
         return "yes"
@@ -55,7 +63,7 @@ def convert_to_yes_no(value):
     else:
         return value  # In case there are other values, return the original value
 
-#cleaning data
+# Cleaning data
 def clean_string(value):
     """Removes unwanted escape sequences and extra quotes from a JSON string."""
     return value.strip('"').replace('\\"', '')
@@ -67,54 +75,48 @@ def parse_drug_names(file_content):
     logging.info(f"Parsed {len(drug_names)} drug names.")
     return drug_names
 
-
-
 # Step 2: Locate REPORT_IDs corresponding to drug names
 def find_report_ids(drug_names, report_drug_content):
     logging.info(f"Finding REPORT_IDs for {len(drug_names)} drug names...")
     report_ids = defaultdict(list)
+    drug_names_set = set(drug_names)  # Create a set for faster lookup
     for line in report_drug_content:
         fields = line.split('$')
         if len(fields) > 1:
             drug_name = clean_string(fields[3]).strip().lower()
             report_id = clean_string(fields[1]).strip()
-            if any(drug_name in line.lower() for drug_name in drug_names):
+            if any(drug_name in drug_names_set for drug_name in drug_names):  # Optimized lookup
                 report_ids[report_id].append(fields)
     logging.info(f"Found {len(report_ids)} report IDs matching the drug names.")
     return report_ids
 
-
-# Step 3: Extract data from reference files based on REPORT_ID
-def extract_report_data(report_ids, reports_content, reactions_content, report_links_content,
-                        report_drug_indication_content, report_drug_content):
-    logging.info("Extracting report data from reference files...")
-    report_data = {}
-
-    # Read reports.txt and build report_data
+# Function to extract reports.txt
+def extract_reports(report_ids, reports_content, report_data):
+    logging.info("Extracting report data from reports.txt...")
     for line in reports_content:
         fields = line.split('$')
         if len(fields) > 1:
             report_id = clean_string(fields[0]).strip()
             if report_id not in report_ids:
-                continue  # Skip if the report_id is not in the report_ids
+                continue
             report_data[report_id] = {
                 'report_no': clean_string(fields[1]),
                 'version_no': clean_string(fields[2]),
-                'datintreceived': convert_date_format(clean_string(fields[4])), # Convert the date
-                'datreceived': convert_date_format(clean_string(fields[3])),  # Convert the date
+                'datintreceived': convert_date_format(clean_string(fields[4])),
+                'datreceived': convert_date_format(clean_string(fields[3])),
                 'source_eng': clean_string(fields[37]),
                 'mah_no': clean_string(fields[5]),
                 'report_type_eng': clean_string(fields[7]),
                 'reporter_type_eng': clean_string(fields[34]),
                 'seriousness_eng': clean_string(fields[26]),
-                'death': convert_to_yes_no(clean_string(fields[28])),  # Convert death field
-                'disability': convert_to_yes_no(clean_string(fields[29])),  # Convert disability field
-                'congenital_anomaly': convert_to_yes_no(clean_string(fields[30])),  # Convert congenital anomaly field
-                'life_threatening': convert_to_yes_no(clean_string(fields[31])),  # Convert life-threatening field
-                'hospitalization': convert_to_yes_no(clean_string(fields[32])),  # Convert hospitalization field
-                'other_medically_imp_cond': convert_to_yes_no(clean_string(fields[33])),  # Convert other medically imp cond field
+                'death': convert_to_yes_no(clean_string(fields[28])),
+                'disability': convert_to_yes_no(clean_string(fields[29])),
+                'congenital_anomaly': convert_to_yes_no(clean_string(fields[30])),
+                'life_threatening': convert_to_yes_no(clean_string(fields[31])),
+                'hospitalization': convert_to_yes_no(clean_string(fields[32])),
+                'other_medically_imp_cond': convert_to_yes_no(clean_string(fields[33])),
                 'age': clean_string(fields[12]),
-                'age_unit_eng' : clean_string(fields[14]),
+                'age_unit_eng': clean_string(fields[14]),
                 'gender_eng': clean_string(fields[10]),
                 'height': clean_string(fields[22]),
                 'height_unit_eng': clean_string(fields[23]),
@@ -122,262 +124,98 @@ def extract_report_data(report_ids, reports_content, reactions_content, report_l
                 'weight_unit_eng': clean_string(fields[20]),
                 'outcome_eng': clean_string(fields[17])
             }
+    logging.info(f"Extracted {len(report_data)} reports.")
 
-    # Read reactions.txt
-    for line in reactions_content:
-        fields = line.split('$')
-        report_id = clean_string(fields[1]).strip()
-        if report_id not in report_ids:
-            continue  # Skip if the report_id is not in the report_ids
-
-        # Accumulate drug names, appending with commas if multiple drugs exist
-        adv_reaction_eng = clean_string(fields[3])
-        meddra_version = clean_string(fields[4])
-        reaction_duration = clean_string(fields[4])
-        if 'reaction_eng' in report_data[report_id]:
-            report_data[report_id]['reaction_eng'] += ', ' + adv_reaction_eng
-            report_data[report_id]['version'] += ', ' + meddra_version
-            report_data[report_id]['duration'] += ', ' + reaction_duration
-        else:
-            report_data[report_id]['reaction_eng'] = adv_reaction_eng
-            report_data[report_id]['version'] = meddra_version
-            report_data[report_id]['duration'] = reaction_duration
-
-        # report_data[report_id]['reaction_eng'] = clean_string(fields[5])
-        # report_data[report_id]['version'] = clean_string(fields[9])
-        # report_data[report_id]['duration'] = clean_string(fields[2])
-
-    # Read report_links.txt
+# Function to extract reportlinks.txt
+def extract_report_links(report_ids, report_links_content, report_data):
+    logging.info("Extracting report link data from report_links.txt...")
     for line in report_links_content:
         fields = line.split('$')
         report_id = clean_string(fields[1]).strip()
-        if report_id not in report_ids:
-            continue  # Skip if the report_id is not in the report_ids
-        report_data[report_id]['record_type_eng'] = clean_string(fields[2])
-        report_data[report_id]['report_link_no'] = clean_string(fields[4])
+        if report_id in report_ids:
+            report_data[report_id]['link'] = clean_string(fields[3])
+    logging.info(f"Extracted {len(report_data)} report links.")
 
-    # Read report_drug_indication.txt
-    # # Read report_drug_indication.txt
-    # for line in report_drug_indication_content:
-    #     fields = line.split('$')
-    #     report_id = fields[1].strip()
-    #
-    #     # Check if the report_id is in the report_ids set
-    #     if report_id not in report_ids:
-    #         report_data[report_id] = {'indication_eng': ''}  # Set blank if no match
-    #         continue  # Skip further processing if the report_id is not in the report_ids
-    #
-    #     # If there's a match, process the indication
-    #     report_data[report_id]['indication_eng'] = fields[4] if len(fields) > 4 else ''
-
-#reading report_drug_indication.txt
-    # Read the file content
-    logging.info("Reading report_drug_indication.txt...")
-    report_drug_indication_content = read_s3_file(input_bucket, report_drug_indication_file)
-
-    # Initialize a set to store all report_ids found in the file
-    indication_report_ids = set()
-
-    if report_drug_indication_content:  # If the file has content
+# Function to extract drug and indication data
+def extract_drug_and_indication_data(report_ids, report_drug_indication_content, report_data, lock):
+    logging.info("Extracting drug and indication data...")
+    indications_map = {}  # Initialize the indications map
+    with lock:
         for line in report_drug_indication_content:
-            # Split the line into fields using '$' as the delimiter
             fields = line.split('$')
-
-            # Check if the line has enough fields to process
             if len(fields) > 1:
-                # Extract the report_id from field[1] and strip any whitespace
-                report_id = clean_string(fields[1]).strip()
+                report_id = clean_string(fields[0]).strip()
+                indication = clean_string(fields[1]).strip()
+                drug_name_eng = clean_string(fields[3]).strip().lower()
 
-                # Skip the line if report_id is not in the report_ids list
-                if report_id not in report_ids:
-                    continue  # Skip if the report_id is not in the report_ids
+                if report_id not in report_data:
+                    continue
 
-                # Add the report_id to the set of indication_report_ids
-                indication_report_ids.add(report_id)
-    else:
-        logging.info("No content found in report_drug_indication.txt.")
+                if report_id not in indications_map:
+                    indications_map[report_id] = {}
 
-    # Compare report_ids with indication_report_ids
-    logging.info("Comparing report_ids with report IDs from indication file...")
-    for report_id in report_ids:
-        if report_id in indication_report_ids:  # Proceed only if report_id exists in the indication file
-            # Get the corresponding line and extract the indication_eng field
-            for line in report_drug_indication_content:
-                fields = line.split('$')
+                indications_map[report_id][drug_name_eng] = indication
 
-                # Check if the line is valid (contains more than one field)
-                if len(fields) > 1:
-                    # Extract the report_id from field[1] and check if it matches
-                    report_id_in_line = clean_string(fields[1]).strip()
+        # Now update the report_data with the indications
+        for report_id, drug_indications in indications_map.items():
+            if report_id in report_data:
+                drug_names = report_data[report_id].get('drug_name_eng', '').split(', ')
+                indications = [drug_indications.get(drug_name, '') for drug_name in drug_names]
+                report_data[report_id]['indication_eng'] = ', '.join(indications)
+    logging.info(f"Extracted drug and indication data for {len(report_data)} reports.")
 
-                    if report_id_in_line == report_id:
-                        # Add the clean indication_eng field to report_data
-                        report_data[report_id]['indication_eng'] = clean_string(fields[4])
-        else:
-            logging.info(f"Skipping report_id {report_id} as it is not in the indication file.")
-
-    # # Read report_drug.txt
-    # Read report_drug.txt and accumulate drug names for each report_id
-    for line in report_drug_content:
+# Function to extract reactions data
+def extract_reactions(report_ids, reactions_content, report_data):
+    logging.info("Extracting reactions data from reactions.txt...")
+    for line in reactions_content:
         fields = line.split('$')
         if len(fields) > 1:
-            report_id = clean_string(fields[1]).strip()
-            if report_id not in report_ids:
-                continue  # Skip if the report_id is not in the report_ids
-            # Accumulate drug names, appending with commas if multiple drugs exist
-            drug_name = clean_string(fields[3])
-            drug_type = clean_string(fields[4])
-            dose_unit = clean_string(fields[9])
-            route_of_admin = clean_string(fields[6])
-            dosage_form = clean_string(fields[20])
-            dose_qty = clean_string(fields[8])
-            frequency = clean_string(fields[15])
-            therapy_time = clean_string(fields[17])
-            therapy_unit = clean_string(fields[18])
-            if 'drug_name_eng' in report_data[report_id]:
-                report_data[report_id]['drug_name_eng'] += ', ' + drug_name
-                report_data[report_id]['drug_type_eng'] += ', ' + drug_type
-                report_data[report_id]['dose_unit_eng'] += ', ' + dose_unit
-                report_data[report_id]['route_eng'] += ', ' + route_of_admin
-                report_data[report_id]['dosageform_eng'] += ', ' + dosage_form
-                report_data[report_id]['unit_dose_qty'] += ', ' + dose_qty
-                report_data[report_id]['freq_time_unit_eng'] += ', ' + frequency
-                report_data[report_id]['therapy_duration'] += ', ' + therapy_time
-                report_data[report_id]['therapy_duration_unit_eng'] += ', ' + therapy_unit
-            else:
-                report_data[report_id]['drug_name_eng'] = drug_name
-                report_data[report_id]['drug_name_eng'] = drug_type
-                report_data[report_id]['dose_unit_eng'] = dose_unit
-                report_data[report_id]['route_eng'] = route_of_admin
-                report_data[report_id]['dosageform_eng'] = dosage_form
-                report_data[report_id]['unit_dose_qty'] = dose_qty
-                report_data[report_id]['freq_time_unit_eng'] = frequency
-                report_data[report_id]['therapy_duration'] = therapy_time
-                report_data[report_id]['therapy_duration_unit_eng'] = therapy_unit
+            report_id = clean_string(fields[0]).strip()
+            if report_id in report_ids:
+                report_data[report_id]['adverse_reaction_eng'] = clean_string(fields[5])
+    logging.info(f"Extracted reactions for {len(report_data)} reports.")
 
-            # report_data[report_id]['dose_unit_eng'] = clean_string(fields[9])
-            # report_data[report_id]['route_eng'] = clean_string(fields[6])
-            # report_data[report_id]['dosageform_eng'] = clean_string(fields[20])
-            # report_data[report_id]['unit_dose_qty'] = clean_string(fields[8])
-            # report_data[report_id]['freq_time_unit_eng'] = clean_string(fields[15])
-            # report_data[report_id]['therapy_duration'] = clean_string(fields[17])
-            # report_data[report_id]['therapy_duration_unit_eng'] = clean_string(fields[18])
+# Function to extract report data concurrently
+def extract_report_data_concurrently(report_ids, reports_content, report_links_content, report_drug_indication_content, reactions_content):
+    logging.info("Extracting report data concurrently...")
+    report_data = defaultdict(dict)
+    lock = threading.Lock()
 
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        executor.submit(extract_reports, report_ids, reports_content, report_data)
+        executor.submit(extract_report_links, report_ids, report_links_content, report_data)
+        executor.submit(extract_drug_and_indication_data, report_ids, report_drug_indication_content, report_data, lock)
+        executor.submit(extract_reactions, report_ids, reactions_content, report_data)
 
-    # for line in report_drug_content:
-    #     fields = line.split('$')
-    #     if len(fields) > 1:
-    #         report_id = fields[1].strip()
-    #         if report_id not in report_ids:
-    #             continue  # Skip if the report_id is not in the report_ids
-    #         # Add the new data fields from report_drug.txt
-    #         report_data[report_id]['drug_name_eng'] = clean_string(fields[3] ) # DRUG_NAME_ENG
-    #         report_data[report_id]['drug_type_eng'] = clean_string(fields[4]  )# DRUG_TYPE_ENG
-    #         report_data[report_id]['dose_unit_eng'] = clean_string(fields[9])  # DOSE_UNIT_ENG
-    #         report_data[report_id]['route_eng'] = clean_string(fields[6] ) # ROUTE_ENG
-    #         report_data[report_id]['dose'] = clean_string(fields[8] ) # DOSE
-    #         report_data[report_id]['freq'] = clean_string(fields[11])  # FREQ
-    #         report_data[report_id]['therapy_duration'] = clean_string(fields[17] ) # DURATION
-
-    logging.info(f"Extracted data for {len(report_data)} report IDs.")
+    logging.info(f"Completed extraction for {len(report_data)} reports.")
     return report_data
 
+# Main function
+async def main():
+    # def main():
+    logging.info("Starting report extraction process...")
+    # loop = asyncio.get_event_loop()
+    logging.info("Starting to read all files concurrently from S3...")
+    file_contents = await read_all_files()
 
-# Step 4: Generate the JSON structure and save it to the output S3 bucket
-def generate_json_output(report_data):
-    logging.info("Generating JSON output...")
-    final_data = []
-    for report_id, data in report_data.items():
-        final_data. append({
-            "report_id": report_id,
-            "report_no": data.get('report_no', ''),
-            "version_no": data.get('version_no', ''),
-            "datintreceived": data.get('datintreceived', ''),
-            "datreceived": data.get('datreceived', ''),
-            "source_eng": data.get('source_eng', ''),
-            "mah_no": data.get('mah_no', ''),
-            "report_type_eng": data.get('report_type_eng', ''),
-            "reporter_type_eng": data.get('reporter_type_eng', ''),
-            "seriousness_eng": data.get('seriousness_eng', ''),
-            "death": data.get('death', ''),
-            "disability": data.get('disability', ''),
-            "congenital_anomaly": data.get('congenital_anomaly', ''),
-            "life_threatening": data.get('life_threatening', ''),
-            "hospitalization": data.get('hospitalization', ''),
-            "other_medically_imp_cond": data.get('other_medically_imp_cond', ''),
-            "age": data.get('age', ''),
-            'age_unit_eng': data.get('age_unit_eng', ''),
-            "gender_eng": data.get('gender_eng', ''),
-            "height": data.get('height', ''),
-            "height_unit_eng": data.get('height_unit_eng', ''),
-            "weight": data.get('weight', ''),
-            "weight_unit_eng": data.get('weight_unit_eng', ''),
-            "outcome_eng": data.get('outcome_eng', ''),
+    drug_names_content, report_drug_content, reports_content, reactions_content, report_links_content, report_drug_indication_content = file_contents
 
-            "record_type_eng": data.get('record_type_eng', ''),
-            "report_link_no": data.get('report_link_no', ''),
-            "drug_name_eng": data.get('drug_name_eng', ''),
-            "drug_type_eng": data.get('drug_type_eng', ''),
-            "route_eng": data.get('route_eng', ''),
-            "dosageform_eng": data.get('dosageform_eng', ''),
-            "unit_dose_qty": data.get('unit_dose_qty', ''),
-            "dose_unit_eng": data.get('dose_unit_eng', ''),
-            "freq_time_unit_eng": data.get('freq_time_unit_eng', ''),
-            "therapy_duration": data.get('therapy_duration', ''),
-            "therapy_duration_unit_eng": data.get('therapy_duration_unit_eng', ''),
-            "indication_eng": data.get('indication_eng', '')  # Indication left blank if not found
-            "reaction_eng": data.get('reaction_eng', ''),
-            "version": data.get('version', ''),
-            "duration": data.get('duration', ''),
-        })
+    logging.info("Parsing drug names...")
+    drug_names = parse_drug_names(drug_names_content)
 
-    try:
-        json_data = json.dumps(final_data, indent=4)
-        timestamp = time.strftime('%Y%m%d-%H%M%S')
-        output_file = f"output_data_{timestamp}.json"
-        s3_client.put_object(Bucket=output_bucket, Key=output_file, Body=json_data)
-        logging.info(f"Successfully uploaded JSON file to S3: {output_file}")
-    except Exception as e:
-        logging.error(f"Error generating or uploading JSON output: {e}")
+    logging.info("Finding report IDs...")
+    report_ids = find_report_ids(drug_names, report_drug_content)
 
+    logging.info("Extracting report data concurrently...")
+    report_data = extract_report_data_concurrently(
+        report_ids,
+        reports_content,
+        report_links_content,
+        report_drug_indication_content,
+        reactions_content
+    )
 
-# Main function to execute all steps in parallel
-def main():
-    logging.info("Starting script execution...")
-    start_time = time.time()
-
-    # Read input files in parallel using ThreadPoolExecutor
-    with ThreadPoolExecutor() as executor:
-        # Submit S3 read tasks
-        futures = {
-            'drug_names': executor.submit(read_s3_file, input_bucket, drug_names_file),
-            'report_drug': executor.submit(read_s3_file, input_bucket, report_drug_file),
-            'reports': executor.submit(read_s3_file, input_bucket, reports_file),
-            'reactions': executor.submit(read_s3_file, input_bucket, reactions_file),
-            'report_links': executor.submit(read_s3_file, input_bucket, report_links_file),
-            'report_drug_indication': executor.submit(read_s3_file, input_bucket, report_drug_indication_file)
-        }
-
-        # Wait for all read tasks to finish
-        data = {key: future.result() for key, future in futures.items()}
-
-    # Step 1: Parse drug names
-    logging.info("Starting parsing drugnames...")
-    drug_names = parse_drug_names(data['drug_names'])
-
-    # Step 2: Find report IDs corresponding to drug names
-    report_ids = find_report_ids(drug_names, data['report_drug'])
-
-    # Step 3: Extract data based on report IDs
-    report_data = extract_report_data(report_ids, data['reports'], data['reactions'], data['report_links'],
-                                      data['report_drug_indication'], data['report_drug'])
-
-    # Step 4: Generate and save the JSON output to S3
-    generate_json_output(report_data)
-
-    logging.info(f"Script execution completed in {time.time() - start_time:.2f} seconds.")
-
+    logging.info(f"Completed report extraction for {len(report_data)} reports.")
 
 if __name__ == "__main__":
-    main()
-
+    asyncio.run(main())  # Use asyncio.run() to run the async main function
