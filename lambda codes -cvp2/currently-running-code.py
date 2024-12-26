@@ -89,13 +89,40 @@ def find_report_ids(drug_names, report_drug_content):
             drug_name = clean_string(fields[3]).strip().lower()  # Normalize drug name to lowercase
             report_id = clean_string(fields[1]).strip()
 
-            # Check if the drug name in the report matches any in the drug names list
-            if drug_name in drug_names_set:
-                report_ids[report_id].append(fields)
+            # Check if any drug name is a substring in the field (fields[3])
+            for name in drug_names_set:
+                if name.lower() in drug_name:  # Check if the drug name is a substring of fields[3]
+                    report_ids[report_id].append(fields)
+                    break  # Stop checking other drug names if a match is found
 
     logging.info(f"Found {len(report_ids)} report IDs matching the drug names.")
     return report_ids
 
+def filter_report_ids_by_source(report_ids, reports_content):
+    logging.info(f"Filtering REPORT_IDs based on SOURCE_ENG...")
+
+    # Only consider the REPORT_IDs in the 374 found earlier
+    report_ids_set = set(report_ids.keys())  # Convert 374 report IDs to a set
+    report_ids_to_remove = set()
+
+    for line in reports_content:
+        fields = line.split('$')
+        if len(fields) > 37:  # Ensure fields[37] (SOURCE_ENG) exists
+            report_id = clean_string(fields[0]).strip()
+            source_eng = clean_string(fields[37]).strip().lower()
+
+            # Check SOURCE_ENG for "mah" only for relevant REPORT_IDs
+            if report_id in report_ids_set and "mah" in source_eng:
+                report_ids_to_remove.add(report_id)
+
+    # Filter out REPORT_IDs to remove
+    filtered_report_ids = {rid: details for rid, details in report_ids.items() if rid not in report_ids_to_remove}
+
+    logging.info(f"Initial REPORT_IDs: {len(report_ids)}")
+    logging.info(f"Excluded REPORT_IDs: {len(report_ids_to_remove)}")
+    logging.info(f"Remaining REPORT_IDs: {len(filtered_report_ids)}")
+
+    return filtered_report_ids
 
 
 def extract_report_data(report_ids, reports_content, reactions_content, report_drug_indication_content, report_links_content, report_drug_content):
@@ -162,14 +189,18 @@ def extract_report_data(report_ids, reports_content, reactions_content, report_d
         report_id = clean_string(fields[1]).strip()
         record_type_eng = clean_string(fields[2]).strip()
         report_link_no = clean_string(fields[4]).strip()
-        if report_id not in report_ids:
-            continue  # Skip if the report_id is not in the report_ids
-        if not record_type_eng:
-            record_type_eng = 'No duplicate or linked report'
-        if not report_link_no:
-            report_link_no = 'No duplicate or linked report'
+
+        # Initialize the report_data entry if it's not already present
         if report_id not in report_data:
-            report_data[report_id] = {}  # Initialize the report_data entry if missing
+            report_data[report_id] = {}
+
+        # If report_id is not in report_ids, set default values
+        if report_id not in report_ids:
+            report_data[report_id]['record_type_eng'] = 'No duplicate or linked report'
+            report_data[report_id]['report_link_no'] = 'No duplicate or linked report'
+            continue  # Skip if the report_id is not in the report_ids
+
+        # Assign the record type and report link number
         report_data[report_id]['record_type_eng'] = record_type_eng
         report_data[report_id]['report_link_no'] = report_link_no
 
@@ -189,6 +220,7 @@ def extract_report_data(report_ids, reports_content, reactions_content, report_d
             freq_time_unit_eng = clean_string(fields[15])
             therapy_duration = clean_string(fields[17])
             therapy_duration_unit_eng = clean_string(fields[18])
+            dosageform_eng = clean_string(fields[20])
 
             # Initialize drug_names_dict and report_data
             if report_id not in drug_names_dict:
@@ -202,19 +234,53 @@ def extract_report_data(report_ids, reports_content, reactions_content, report_d
             else:
                 report_data[report_id]['drug_name'] = drug_name
 
-            report_data[report_id]['drug_involvement'] = report_data[report_id].get('drug_involvement',
-                                                                                    '') + ', ' + drug_involvement
-            report_data[report_id]['route_admin'] = report_data[report_id].get('route_admin', '') + ', ' + route_admin
-            report_data[report_id]['unit_dose_qty'] = report_data[report_id].get('unit_dose_qty',
-                                                                                 '') + ', ' + unit_dose_qty
-            report_data[report_id]['dose_unit_eng'] = report_data[report_id].get('dose_unit_eng',
-                                                                                 '') + ', ' + dose_unit_eng
-            report_data[report_id]['freq_time_unit_eng'] = report_data[report_id].get('freq_time_unit_eng',
-                                                                                      '') + ', ' + freq_time_unit_eng
-            report_data[report_id]['therapy_duration'] = report_data[report_id].get('therapy_duration',
-                                                                                    '') + ', ' + therapy_duration
-            report_data[report_id]['therapy_duration_unit_eng'] = report_data[report_id].get(
-                'therapy_duration_unit_eng', '') + ', ' + therapy_duration_unit_eng
+           # Append or initialize for 'drug_involvement'
+            if 'drug_involvement' in report_data[report_id]:
+                report_data[report_id]['drug_involvement'] += ', ' + drug_involvement
+            else:
+                report_data[report_id]['drug_involvement'] = drug_involvement
+
+            # Append or initialize for 'route_admin'
+            if 'route_admin' in report_data[report_id]:
+                report_data[report_id]['route_admin'] += ', ' + route_admin
+            else:
+                report_data[report_id]['route_admin'] = route_admin
+
+            # Append or initialize for 'unit_dose_qty'
+            if 'unit_dose_qty' in report_data[report_id]:
+                report_data[report_id]['unit_dose_qty'] += ', ' + unit_dose_qty
+            else:
+                report_data[report_id]['unit_dose_qty'] = unit_dose_qty
+
+            # Append or initialize for 'dose_unit_eng'
+            if 'dose_unit_eng' in report_data[report_id]:
+                report_data[report_id]['dose_unit_eng'] += ', ' + dose_unit_eng
+            else:
+                report_data[report_id]['dose_unit_eng'] = dose_unit_eng
+
+            # Append or initialize for 'freq_time_unit_eng'
+            if 'freq_time_unit_eng' in report_data[report_id]:
+                report_data[report_id]['freq_time_unit_eng'] += ', ' + freq_time_unit_eng
+            else:
+                report_data[report_id]['freq_time_unit_eng'] = freq_time_unit_eng
+
+            # Append or initialize for 'therapy_duration'
+            if 'therapy_duration' in report_data[report_id]:
+                report_data[report_id]['therapy_duration'] += ', ' + therapy_duration
+            else:
+                report_data[report_id]['therapy_duration'] = therapy_duration
+
+            # Append or initialize for 'therapy_duration_unit_eng'
+            if 'therapy_duration_unit_eng' in report_data[report_id]:
+                report_data[report_id]['therapy_duration_unit_eng'] += ', ' + therapy_duration_unit_eng
+            else:
+                report_data[report_id]['therapy_duration_unit_eng'] = therapy_duration_unit_eng
+
+            # Append or initialize for 'therapy_duration_unit_eng'
+            if 'dosageform_eng' in report_data[report_id]:
+                report_data[report_id]['dosageform_eng'] += ', ' + dosageform_eng
+            else:
+                report_data[report_id]['dosageform_eng'] = dosageform_eng
 
     # Step 5: Process report_drug_indication.txt after all other files
     for line in report_drug_indication_content:
@@ -232,14 +298,15 @@ def extract_report_data(report_ids, reports_content, reactions_content, report_d
 
             # Initialize indication_eng if it doesn't exist
             if 'indication_eng' not in report_data[report_id]:
-                report_data[report_id]['indication_eng'] = ' , ' * len(drug_names_for_report)  # Placeholder for each drug
+                # Placeholder for each drug: a space separated by commas
+                report_data[report_id]['indication_eng'] = ' , ' * (len(drug_names_for_report) - 1) + ' '
 
             # Find the drug index and assign the correct indication to that index
             for index, drug_name in enumerate(drug_names_for_report):
                 # Match the drug name with its indication if it exists
                 if drug_name_eng == drug_name.lower():
                     indication_list = report_data[report_id]['indication_eng'].split(', ')
-                    indication_list[index] = indication  # Assign the indication to the correct drug
+                    indication_list[index] = indication.strip()  # Assign the indication to the correct drug
                     report_data[report_id]['indication_eng'] = ', '.join(indication_list)
 
     return report_data
@@ -249,23 +316,18 @@ def extract_report_data(report_ids, reports_content, reactions_content, report_d
 # Step 4: Generate the JSON structure and save it to the output S3 bucket
 def generate_json_output(report_data):
     logging.info("Generating JSON output...")
-    final_data = []
-    for report_id, data in report_data.items():
-        final_data.append({
+
+    # Use list comprehension for faster performance
+    final_data = [
+        {
             "report_no": data.get('report_no', ''),
             "version_no": data.get('version_no', ''),
             "datintreceived": data.get('datintreceived', ''),
             "datreceived": data.get('datreceived', ''),
+            "source_eng": data.get('source_eng', ''),
             "mah_no": data.get('mah_no', ''),
             "report_type_eng": data.get('report_type_eng', ''),
-            "gender_eng": data.get('gender_eng', ''),
-            "age": data.get('age', ''),
-            "age_unit_eng": data.get('age_unit_eng', ''),
-            "outcome_eng": data.get('outcome_eng', ''),
-            "weight": data.get('weight', ''),
-            "weight_unit_eng": data.get('weight_unit_eng', ''),
-            "height": data.get('height', ''),
-            "height_unit_eng": data.get('height_unit_eng', ''),
+            "reporter_type_eng": data.get('reporter_type_eng', ''),
             "seriousness_eng": data.get('seriousness_eng', ''),
             "death": data.get('death', ''),
             "disability": data.get('disability', ''),
@@ -273,25 +335,33 @@ def generate_json_output(report_data):
             "life_threatening": data.get('life_threatening', ''),
             "hospitalization": data.get('hospitalization', ''),
             "other_medically_imp_cond": data.get('other_medically_imp_cond', ''),
-            "reporter_type_eng": data.get('reporter_type_eng', ''),
-            "source_eng": data.get('source_eng', ''),
-            "pt_name_eng": data.get('pt_name_eng', ''),
-            "meddra_version": data.get('meddra_version', ''),
-            "duration": data.get('duration', ''),
-            "duration_unit_eng": data.get('duration_unit_eng', ''),
+            "age": data.get('age', ''),
+            "age_unit_eng": data.get('age_unit_eng', ''),
+            "gender_eng": data.get('gender_eng', ''),
+            "height": data.get('height', ''),
+            "height_unit_eng": data.get('height_unit_eng', ''),
+            "weight": data.get('weight', ''),
+            "weight_unit_eng": data.get('weight_unit_eng', ''),
+            "outcome_eng": data.get('outcome_eng', ''),
             "record_type_eng": data.get('record_type_eng', ''),
             "report_link_no": data.get('report_link_no', ''),
             "drug_name": data.get('drug_name', ''),
             "drug_involvement": data.get('drug_involvement', ''),
+            "dosage_form_eng": data.get('dosageform_eng', ''),
             "route_admin": data.get('route_admin', ''),
             "unit_dose_qty": data.get('unit_dose_qty', ''),
             "dose_unit_eng": data.get('dose_unit_eng', ''),
             "freq_time_unit_eng": data.get('freq_time_unit_eng', ''),
             "therapy_duration": data.get('therapy_duration', ''),
             "therapy_duration_unit_eng": data.get('therapy_duration_unit_eng', ''),
-            "dosage_form_eng": data.get('dosage_form_eng', ''),
-            "indication_eng": data.get('indication_eng', '')
-        })
+            "indication_eng": data.get('indication_eng', ''),
+            "pt_name_eng": data.get('pt_name_eng', ''),
+            "meddra_version": data.get('meddra_version', ''),
+            "duration": data.get('duration', ''),
+            "duration_unit_eng": data.get('duration_unit_eng', '')
+        }
+        for report_id, data in report_data.items()
+    ]
 
     try:
         json_data = json.dumps(final_data, indent=4)
@@ -327,8 +397,10 @@ def main():
     logging.info("Starting parsing drugnames...")
     drug_names = parse_drug_names(data['drug_names'])
 
-    # Step 2: Find report IDs corresponding to drug names
-    report_ids = find_report_ids(drug_names, data['report_drug'])
+     # Step 2: Find report IDs corresponding to drug names
+    filter_report_ids = find_report_ids(drug_names, data['report_drug'])
+
+    report_ids = filter_report_ids_by_source(filter_report_ids, data['reports'])
 
     # Step 3: Extract data based on report IDs
     report_data = extract_report_data(report_ids, data['reports'], data['reactions'], data['report_drug_indication'], data['report_links'], data['report_drug'])
