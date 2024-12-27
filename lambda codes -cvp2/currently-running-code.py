@@ -5,6 +5,8 @@ from collections import defaultdict
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+import io
+
 
 # Initialize logging and S3 client
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -184,25 +186,35 @@ def extract_report_data(report_ids, reports_content, reactions_content, report_d
             report_data[report_id]['duration_unit_eng'] = duration_unit_eng
 
     # Step 3: Process report_links.txt
+    matched_ids = set()  # To track report_ids found in report_links.txt
+
     for line in report_links_content:
         fields = line.split('$')
         report_id = clean_string(fields[1]).strip()
         record_type_eng = clean_string(fields[2]).strip()
         report_link_no = clean_string(fields[4]).strip()
 
-        # Initialize the report_data entry if it's not already present
-        if report_id not in report_data:
-            report_data[report_id] = {}
+        # Process only if the report_id is in report_ids
+        if report_id in report_ids:
+            # Initialize the report_data entry if it's not already present
+            if report_id not in report_data:
+                report_data[report_id] = {}
 
-        # If report_id is not in report_ids, set default values
-        if report_id not in report_ids:
-            report_data[report_id]['record_type_eng'] = 'No duplicate or linked report'
-            report_data[report_id]['report_link_no'] = 'No duplicate or linked report'
-            continue  # Skip if the report_id is not in the report_ids
+            # Assign values from the line
+            report_data[report_id]['record_type_eng'] = record_type_eng
+            report_data[report_id]['report_link_no'] = report_link_no
 
-        # Assign the record type and report link number
-        report_data[report_id]['record_type_eng'] = record_type_eng
-        report_data[report_id]['report_link_no'] = report_link_no
+            # Mark this report_id as matched
+            matched_ids.add(report_id)
+
+    # Handle report_ids that were not matched
+    for report_id in report_ids:
+        if report_id not in matched_ids:
+            # Ensure only missing fields are updated without overwriting existing data
+            if report_id not in report_data:
+                report_data[report_id] = {}  # Initialize if not present
+            report_data[report_id].setdefault('record_type_eng', 'No duplicate or linked report')
+            report_data[report_id].setdefault('report_link_no', 'No duplicate or linked report')
 
     # Step 4: Process report_drug.txt
     drug_names_dict = {}
@@ -312,56 +324,52 @@ def extract_report_data(report_ids, reports_content, reactions_content, report_d
     return report_data
 
 
-
 # Step 4: Generate the JSON structure and save it to the output S3 bucket
 def generate_json_output(report_data):
     logging.info("Generating JSON output...")
-
-    # Use list comprehension for faster performance
-    final_data = [
-        {
-            "report_no": data.get('report_no', ''),
-            "version_no": data.get('version_no', ''),
-            "datintreceived": data.get('datintreceived', ''),
-            "datreceived": data.get('datreceived', ''),
-            "source_eng": data.get('source_eng', ''),
-            "mah_no": data.get('mah_no', ''),
-            "report_type_eng": data.get('report_type_eng', ''),
-            "reporter_type_eng": data.get('reporter_type_eng', ''),
-            "seriousness_eng": data.get('seriousness_eng', ''),
-            "death": data.get('death', ''),
-            "disability": data.get('disability', ''),
-            "congenital_anomaly": data.get('congenital_anomaly', ''),
-            "life_threatening": data.get('life_threatening', ''),
-            "hospitalization": data.get('hospitalization', ''),
-            "other_medically_imp_cond": data.get('other_medically_imp_cond', ''),
-            "age": data.get('age', ''),
-            "age_unit_eng": data.get('age_unit_eng', ''),
-            "gender_eng": data.get('gender_eng', ''),
-            "height": data.get('height', ''),
-            "height_unit_eng": data.get('height_unit_eng', ''),
-            "weight": data.get('weight', ''),
-            "weight_unit_eng": data.get('weight_unit_eng', ''),
-            "outcome_eng": data.get('outcome_eng', ''),
-            "record_type_eng": data.get('record_type_eng', ''),
-            "report_link_no": data.get('report_link_no', ''),
-            "drug_name": data.get('drug_name', ''),
-            "drug_involvement": data.get('drug_involvement', ''),
-            "dosage_form_eng": data.get('dosageform_eng', ''),
-            "route_admin": data.get('route_admin', ''),
-            "unit_dose_qty": data.get('unit_dose_qty', ''),
-            "dose_unit_eng": data.get('dose_unit_eng', ''),
-            "freq_time_unit_eng": data.get('freq_time_unit_eng', ''),
-            "therapy_duration": data.get('therapy_duration', ''),
-            "therapy_duration_unit_eng": data.get('therapy_duration_unit_eng', ''),
-            "indication_eng": data.get('indication_eng', ''),
-            "pt_name_eng": data.get('pt_name_eng', ''),
-            "meddra_version": data.get('meddra_version', ''),
-            "duration": data.get('duration', ''),
-            "duration_unit_eng": data.get('duration_unit_eng', '')
-        }
-        for report_id, data in report_data.items()
-    ]
+    final_data = []
+    for report_id, data in report_data.items():
+        final_data. append({
+                "report_no": data.get('report_no', ''),
+                "version_no": data.get('version_no', ''),
+                "datintreceived": data.get('datintreceived', ''),
+                "datreceived": data.get('datreceived', ''),
+                "source_eng": data.get('source_eng', ''),
+                "mah_no": data.get('mah_no', ''),
+                "report_type_eng": data.get('report_type_eng', ''),
+                "reporter_type_eng": data.get('reporter_type_eng', ''),
+                "seriousness_eng": data.get('seriousness_eng', ''),
+                "death": data.get('death', ''),
+                "disability": data.get('disability', ''),
+                "congenital_anomaly": data.get('congenital_anomaly', ''),
+                "life_threatening": data.get('life_threatening', ''),
+                "hospitalization": data.get('hospitalization', ''),
+                "other_medically_imp_cond": data.get('other_medically_imp_cond', ''),
+                "age": data.get('age', ''),
+                "age_unit_eng": data.get('age_unit_eng', ''),
+                "gender_eng": data.get('gender_eng', ''),
+                "height": data.get('height', ''),
+                "height_unit_eng": data.get('height_unit_eng', ''),
+                "weight": data.get('weight', ''),
+                "weight_unit_eng": data.get('weight_unit_eng', ''),
+                "outcome_eng": data.get('outcome_eng', ''),
+                "record_type_eng": data.get('record_type_eng', ''),
+                "report_link_no": data.get('report_link_no', ''),
+                "drug_name": data.get('drug_name', ''),
+                "drug_involvement": data.get('drug_involvement', ''),
+                "dosage_form_eng": data.get('dosageform_eng', ''),
+                "route_admin": data.get('route_admin', ''),
+                "unit_dose_qty": data.get('unit_dose_qty', ''),
+                "dose_unit_eng": data.get('dose_unit_eng', ''),
+                "freq_time_unit_eng": data.get('freq_time_unit_eng', ''),
+                "therapy_duration": data.get('therapy_duration', ''),
+                "therapy_duration_unit_eng": data.get('therapy_duration_unit_eng', ''),
+                "indication_eng": data.get('indication_eng', ''),
+                "pt_name_eng": data.get('pt_name_eng', ''),
+                "meddra_version": data.get('meddra_version', ''),
+                "duration": data.get('duration', ''),
+                "duration_unit_eng": data.get('duration_unit_eng', '')
+            })
 
     try:
         json_data = json.dumps(final_data, indent=4)
@@ -371,6 +379,64 @@ def generate_json_output(report_data):
         logging.info(f"Successfully uploaded JSON file to S3: {output_file}")
     except Exception as e:
         logging.error(f"Error generating or uploading JSON output: {e}")
+# # Step 4: Generate the JSON structure and save it to the output S3 bucket
+# def generate_json_output(report_data):
+#     logging.info("Generating JSON output...")
+#
+#     # Use list comprehension for faster performance
+#     final_data = [
+#         {
+#             "report_no": data.get('report_no', ''),
+#             "version_no": data.get('version_no', ''),
+#             "datintreceived": data.get('datintreceived', ''),
+#             "datreceived": data.get('datreceived', ''),
+#             "source_eng": data.get('source_eng', ''),
+#             "mah_no": data.get('mah_no', ''),
+#             "report_type_eng": data.get('report_type_eng', ''),
+#             "reporter_type_eng": data.get('reporter_type_eng', ''),
+#             "seriousness_eng": data.get('seriousness_eng', ''),
+#             "death": data.get('death', ''),
+#             "disability": data.get('disability', ''),
+#             "congenital_anomaly": data.get('congenital_anomaly', ''),
+#             "life_threatening": data.get('life_threatening', ''),
+#             "hospitalization": data.get('hospitalization', ''),
+#             "other_medically_imp_cond": data.get('other_medically_imp_cond', ''),
+#             "age": data.get('age', ''),
+#             "age_unit_eng": data.get('age_unit_eng', ''),
+#             "gender_eng": data.get('gender_eng', ''),
+#             "height": data.get('height', ''),
+#             "height_unit_eng": data.get('height_unit_eng', ''),
+#             "weight": data.get('weight', ''),
+#             "weight_unit_eng": data.get('weight_unit_eng', ''),
+#             "outcome_eng": data.get('outcome_eng', ''),
+#             "record_type_eng": data.get('record_type_eng', ''),
+#             "report_link_no": data.get('report_link_no', ''),
+#             "drug_name": data.get('drug_name', ''),
+#             "drug_involvement": data.get('drug_involvement', ''),
+#             "dosage_form_eng": data.get('dosageform_eng', ''),
+#             "route_admin": data.get('route_admin', ''),
+#             "unit_dose_qty": data.get('unit_dose_qty', ''),
+#             "dose_unit_eng": data.get('dose_unit_eng', ''),
+#             "freq_time_unit_eng": data.get('freq_time_unit_eng', ''),
+#             "therapy_duration": data.get('therapy_duration', ''),
+#             "therapy_duration_unit_eng": data.get('therapy_duration_unit_eng', ''),
+#             "indication_eng": data.get('indication_eng', ''),
+#             "pt_name_eng": data.get('pt_name_eng', ''),
+#             "meddra_version": data.get('meddra_version', ''),
+#             "duration": data.get('duration', ''),
+#             "duration_unit_eng": data.get('duration_unit_eng', '')
+#         }
+#         for report_id, data in report_data.items()
+#     ]
+#
+#     try:
+#         json_data = json.dumps(final_data, indent=4)
+#         timestamp = time.strftime('%Y%m%d-%H%M%S')
+#         output_file = f"output_data_{timestamp}.json"
+#         s3_client.put_object(Bucket=output_bucket, Key=output_file, Body=json_data)
+#         logging.info(f"Successfully uploaded JSON file to S3: {output_file}")
+#     except Exception as e:
+#         logging.error(f"Error generating or uploading JSON output: {e}")
 
 
 # Main function to execute all steps in parallel
