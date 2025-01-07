@@ -7,14 +7,15 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import io
 
-
-# Initialize logging and S3 client
+# Initialize logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Initialize S3 client
 s3_client = boto3.client('s3')
 
 # Input and output S3 buckets
 input_bucket = 'cvp-2-bucket'
-output_bucket = 'cvp-2-output-2-testing'
+output_bucket = 'cvp-2-output'
 
 # File paths in S3
 drug_names_file = 'Input_data/Suspected_Product_Brand_Name/drug_names.txt'
@@ -35,7 +36,6 @@ def read_s3_file(bucket, key):
     except Exception as e:
         logging.error(f"Error reading S3 file {key} from bucket {bucket}: {e}")
         return []
-
 
 # converting date format
 def convert_date_format(date_str):
@@ -76,7 +76,6 @@ def parse_drug_names(file_content):
     return list(drug_names)  # Convert back to list if needed
 
 
-
 # Step 2: Locate REPORT_IDs corresponding to drug names
 def find_report_ids(drug_names, report_drug_content):
     logging.info(f"Finding REPORT_IDs for {len(drug_names)} drug names...")
@@ -99,6 +98,7 @@ def find_report_ids(drug_names, report_drug_content):
 
     logging.info(f"Found {len(report_ids)} report IDs matching the drug names.")
     return report_ids
+
 
 def filter_report_ids_by_source(report_ids, reports_content):
     logging.info(f"Filtering REPORT_IDs based on SOURCE_ENG...")
@@ -127,7 +127,8 @@ def filter_report_ids_by_source(report_ids, reports_content):
     return filtered_report_ids
 
 
-def extract_report_data(report_ids, reports_content, reactions_content, report_drug_indication_content, report_links_content, report_drug_content):
+def extract_report_data(report_ids, reports_content, reactions_content, report_drug_indication_content,
+                        report_links_content, report_drug_content):
     logging.info("Extracting report data from reference files...")
     report_data = {}
 
@@ -246,7 +247,7 @@ def extract_report_data(report_ids, reports_content, reactions_content, report_d
             else:
                 report_data[report_id]['drug_name'] = drug_name
 
-           # Append or initialize for 'drug_involvement'
+            # Append or initialize for 'drug_involvement'
             if 'drug_involvement' in report_data[report_id]:
                 report_data[report_id]['drug_involvement'] += ', ' + drug_involvement
             else:
@@ -324,70 +325,124 @@ def extract_report_data(report_ids, reports_content, reactions_content, report_d
     return report_data
 
 
-# Step 4: Generate the JSON structure and save it to the output S3 bucket
+def get_existing_report_ids_from_s3():
+    existing_report_ids = set()
+
+    try:
+        # List all objects in the 'report_output/' folder
+        response = s3_client.list_objects_v2(Bucket=output_bucket, Prefix='report_output/')
+        if 'Contents' in response:
+            for obj in response['Contents']:
+                file_key = obj['Key']
+                if file_key.endswith('.json'):
+                    # Read the JSON file
+                    file_obj = s3_client.get_object(Bucket=output_bucket, Key=file_key)
+                    file_data = json.loads(file_obj['Body'].read().decode('utf-8'))
+
+                    # Extract report numbers from the JSON file
+                    for record in file_data:
+                        if 'report_no' in record:
+                            existing_report_ids.add(str(record['report_no']).strip().lower())  # Normalize to string (strip spaces, lowercase)
+
+        logging.info(f"Existing report numbers from S3: {existing_report_ids}")
+
+    except Exception as e:
+        logging.error(f"Error while retrieving existing report numbers from S3: {e}")
+
+    return existing_report_ids
+
+
+def filter_new_report_data(report_data, existing_report_ids):
+    new_report_data = {}
+
+    # Iterate over the report data and check if the report_no is already in the existing reports
+    for report_id, data in report_data.items():
+        report_no = str(data.get('report_no', '')).strip().lower()  # Normalize report_no to string (strip spaces, lowercase)
+
+        if report_no not in existing_report_ids:
+            new_report_data[report_id] = data  # Add this report to new report data if it's not in the existing reports
+            logging.info(f"New report found: {report_no}")  # Log the new report number
+        else:
+            logging.info(f"Duplicate report found: {report_no}")  # Log duplicate report number
+
+    logging.info(f"New report data: {new_report_data.keys()}")  # Log keys of new reports
+
+    return new_report_data
+
+
+
 def generate_json_output(report_data):
+    """
+    Generate and upload the final JSON output to S3.
+    Only proceeds if there are new reports to upload.
+    """
+    if not report_data:
+        logging.info("No new reports found. Skipping JSON generation and upload.")
+        return
+
     logging.info("Generating JSON output...")
     final_data = []
     for report_id, data in report_data.items():
-        final_data. append({
-                "report_no": data.get('report_no', ''),
-                "version_no": data.get('version_no', ''),
-                "datintreceived": data.get('datintreceived', ''),
-                "datreceived": data.get('datreceived', ''),
-                "source_eng": data.get('source_eng', ''),
-                "mah_no": data.get('mah_no', ''),
-                "report_type_eng": data.get('report_type_eng', ''),
-                "reporter_type_eng": data.get('reporter_type_eng', ''),
-                "seriousness_eng": data.get('seriousness_eng', ''),
-                "death": data.get('death', ''),
-                "disability": data.get('disability', ''),
-                "congenital_anomaly": data.get('congenital_anomaly', ''),
-                "life_threatening": data.get('life_threatening', ''),
-                "hospitalization": data.get('hospitalization', ''),
-                "other_medically_imp_cond": data.get('other_medically_imp_cond', ''),
-                "age": data.get('age', ''),
-                "age_unit_eng": data.get('age_unit_eng', ''),
-                "gender_eng": data.get('gender_eng', ''),
-                "height": data.get('height', ''),
-                "height_unit_eng": data.get('height_unit_eng', ''),
-                "weight": data.get('weight', ''),
-                "weight_unit_eng": data.get('weight_unit_eng', ''),
-                "outcome_eng": data.get('outcome_eng', ''),
-                "record_type_eng": data.get('record_type_eng', ''),
-                "report_link_no": data.get('report_link_no', ''),
-                "drug_name": data.get('drug_name', ''),
-                "drug_involvement": data.get('drug_involvement', ''),
-                "dosage_form_eng": data.get('dosageform_eng', ''),
-                "route_admin": data.get('route_admin', ''),
-                "unit_dose_qty": data.get('unit_dose_qty', ''),
-                "dose_unit_eng": data.get('dose_unit_eng', ''),
-                "freq_time_unit_eng": data.get('freq_time_unit_eng', ''),
-                "therapy_duration": data.get('therapy_duration', ''),
-                "therapy_duration_unit_eng": data.get('therapy_duration_unit_eng', ''),
-                "indication_eng": data.get('indication_eng', ''),
-                "pt_name_eng": data.get('pt_name_eng', ''),
-                "meddra_version": data.get('meddra_version', ''),
-                "duration": data.get('duration', ''),
-                "duration_unit_eng": data.get('duration_unit_eng', '')
-            })
+        final_data.append({
+            "report_no": data.get('report_no', ''),
+            "version_no": data.get('version_no', ''),
+            "datintreceived": data.get('datintreceived', ''),
+            "datreceived": data.get('datreceived', ''),
+            "source_eng": data.get('source_eng', ''),
+            "mah_no": data.get('mah_no', ''),
+            "report_type_eng": data.get('report_type_eng', ''),
+            "reporter_type_eng": data.get('reporter_type_eng', ''),
+            "seriousness_eng": data.get('seriousness_eng', ''),
+            "death": data.get('death', ''),
+            "disability": data.get('disability', ''),
+            "congenital_anomaly": data.get('congenital_anomaly', ''),
+            "life_threatening": data.get('life_threatening', ''),
+            "hospitalization": data.get('hospitalization', ''),
+            "other_medically_imp_cond": data.get('other_medically_imp_cond', ''),
+            "age": data.get('age', ''),
+            "age_unit_eng": data.get('age_unit_eng', ''),
+            "gender_eng": data.get('gender_eng', ''),
+            "height": data.get('height', ''),
+            "height_unit_eng": data.get('height_unit_eng', ''),
+            "weight": data.get('weight', ''),
+            "weight_unit_eng": data.get('weight_unit_eng', ''),
+            "outcome_eng": data.get('outcome_eng', ''),
+            "record_type_eng": data.get('record_type_eng', ''),
+            "report_link_no": data.get('report_link_no', ''),
+            "drug_name": data.get('drug_name', ''),
+            "drug_involvement": data.get('drug_involvement', ''),
+            "dosage_form_eng": data.get('dosageform_eng', ''),
+            "route_admin": data.get('route_admin', ''),
+            "unit_dose_qty": data.get('unit_dose_qty', ''),
+            "dose_unit_eng": data.get('dose_unit_eng', ''),
+            "freq_time_unit_eng": data.get('freq_time_unit_eng', ''),
+            "therapy_duration": data.get('therapy_duration', ''),
+            "therapy_duration_unit_eng": data.get('therapy_duration_unit_eng', ''),
+            "indication_eng": data.get('indication_eng', ''),
+            "pt_name_eng": data.get('pt_name_eng', ''),
+            "meddra_version": data.get('meddra_version', ''),
+            "duration": data.get('duration', ''),
+            "duration_unit_eng": data.get('duration_unit_eng', '')
+        })
 
     try:
         json_data = json.dumps(final_data, indent=4)
         timestamp = time.strftime('%Y%m%d-%H%M%S')
-        output_file = f"output_data_{timestamp}.json"
+        output_file = f"report_output/output_data_{timestamp}.json"
         s3_client.put_object(Bucket=output_bucket, Key=output_file, Body=json_data)
         logging.info(f"Successfully uploaded JSON file to S3: {output_file}")
     except Exception as e:
         logging.error(f"Error generating or uploading JSON output: {e}")
 
 
-
-# Main function to execute all steps in parallel
 def main():
     logging.info("Starting script execution...")
     start_time = time.time()
 
-    # Read input files in parallel using ThreadPoolExecutor
+    # Step 1: Retrieve existing report IDs from previous output files
+    existing_report_ids = get_existing_report_ids_from_s3()
+
+    # Step 2: Read input files in parallel using ThreadPoolExecutor
     with ThreadPoolExecutor() as executor:
         # Submit S3 read tasks
         futures = {
@@ -402,22 +457,39 @@ def main():
         # Wait for all read tasks to finish
         data = {key: future.result() for key, future in futures.items()}
 
-    # Step 1: Parse drug names
+    # Step 3: Parse drug names
     logging.info("Starting parsing drugnames...")
     drug_names = parse_drug_names(data['drug_names'])
 
-     # Step 2: Find report IDs corresponding to drug names
+    # Step 4: Find report IDs corresponding to drug names
     filter_report_ids = find_report_ids(drug_names, data['report_drug'])
 
     report_ids = filter_report_ids_by_source(filter_report_ids, data['reports'])
 
-    # Step 3: Extract data based on report IDs
-    report_data = extract_report_data(report_ids, data['reports'], data['reactions'], data['report_drug_indication'], data['report_links'], data['report_drug'])
+    # Step 5: Extract data based on report IDs
+    report_data = extract_report_data(report_ids, data['reports'], data['reactions'], data['report_drug_indication'],
+                                      data['report_links'], data['report_drug'])
 
-    # Step 4: Generate and save the JSON output to S3
-    generate_json_output(report_data)
+    # Step 6: Filter new report data that is not already in existing reports
+    new_report_data = filter_new_report_data(report_data, existing_report_ids)
+
+    # Step 7: Generate and save the JSON output to S3 (if there are new reports)
+    generate_json_output(new_report_data)
 
     logging.info(f"Script execution completed in {time.time() - start_time:.2f} seconds.")
+
+
+# Lambda handler (can be used in AWS Lambda environment)
+def lambda_handler(event, context):
+    logging.info("Lambda function started.")
+
+    # Simulate parallel S3 reading in AWS Lambda by calling main function (in a single thread for Lambda)
+    main()
+
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Processing completed successfully.')
+    }
 
 
 if __name__ == "__main__":
