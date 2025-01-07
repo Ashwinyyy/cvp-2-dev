@@ -1,66 +1,125 @@
 import json
 import boto3
-from datetime import datetime
+import logging
 
-# Sample data for testing (same as before)
-json_data = [
-    {
-        "report_no": "000585940",
-        "version_no": "0",
-        "datintreceived": "2014-02-04",
-        "datreceived": "2014-02-04",
-        "source_eng": "Hospital",
-        "mah_no": "",
-        "report_type_eng": "Spontaneous",
-        "reporter_type_eng": "Other health professional",
-        "seriousness_eng": "Not Serious",
-        "death": "",
-        "disability": "",
-        "congenital_anomaly": "",
-        "life_threatening": "",
-        "hospitalization": "",
-        "other_medically_imp_cond": "",
-        "age": "",
-        "age_unit_eng": "",
-        "gender_eng": "Female",
-        "height": "",
-        "height_unit_eng": "",
-        "weight": "9.94",
-        "weight_unit_eng": "Kilogram",
-        "outcome_eng": "Unknown",
-        "record_type_eng": "No duplicate or linked report",
-        "report_link_no": "No duplicate or linked report",
-        "drug_name": "TYLENOL, OCTAGAM 10% FOR I.V. INFUSION, BENADRYL",
-        "drug_involvement": "Concomitant, Suspect, Concomitant",
-        "dosage_form_eng": "NOT SPECIFIED, SOLUTION INTRAVENOUS, NOT SPECIFIED",
-        "route_admin": ", Intravenous (not otherwise specified), ",
-        "unit_dose_qty": ", 20, ",
-        "dose_unit_eng": ", Gram, ",
-        "freq_time_unit_eng": ", , ",
-        "therapy_duration": ", 2, ",
-        "therapy_duration_unit_eng": ", Days, ",
-        "indication_eng": " , Kawasaki's disease,  ",
-        "pt_name_eng": "Coombs direct test positive, Haemoglobin decreased",
-        "meddra_version": "v.27.1, v.27.1",
-        "duration": ", ",
-        "duration_unit_eng": ", "
-    }
-]
+# Configure logger
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+
+def load_json_from_s3(bucket_name, directory):
+    """Fetch the latest JSON file from the specified S3 directory."""
+    s3_client = boto3.client('s3')
+
+    # List all objects in the given directory
+    try:
+        response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=directory)
+        files = response.get('Contents', [])
+
+        if not files:
+            logger.info(f"No files found in {directory}.")
+            return None
+
+        # Sort files by last modified date, descending order
+        files.sort(key=lambda x: x['LastModified'], reverse=True)
+
+        # Get the most recent file
+        latest_file = files[0]['Key']
+        logger.info(f"Latest file: {latest_file}")
+
+        # Fetch the latest file from S3
+        file_obj = s3_client.get_object(Bucket=bucket_name, Key=latest_file)
+        file_content = file_obj['Body'].read().decode('utf-8')
+
+        # Parse JSON content
+        json_data = json.loads(file_content)
+        return json_data
+
+    except Exception as e:
+        logger.error(f"Error loading JSON from S3: {e}")
+        return None
 
 
 def split_comma_values(value):
-    """Helper function to split comma-separated values into an array and remove placeholders."""
-    # Split and strip any spaces, also remove placeholder values
-    placeholders = ["{{health_product_role}}", "{{dosage_form}}", "{{route_of_administration}}",
-                    "{{dose}}", "{{frequency}}", "{{therapy_duration}}", "{{indication}}",
-                    "{{meddra_version}}", "{{reaction_duration}}"]
-    values = [v.strip() for v in value.split(',') if v.strip() not in placeholders]
+    """Helper function to split comma-separated values and remove placeholders."""
+    values = [v.strip() for v in value.split(',')]
     return values
 
 
 def format_combined_values(quantity, unit):
     """Combine quantity and unit into a single string."""
     return f"{quantity} {unit}" if quantity and unit else ""
+
+
+def generate_html_from_template(item, formatted_data, template_html):
+    """Generate HTML content for one report."""
+    # Replace placeholders in the HTML template with dynamic values
+    html_template = template_html
+    html_template = html_template.replace('{{adverse_reaction_report_number}}', item.get('report_no', ''))
+    html_template = html_template.replace('{{latest_aer_version_number}}', item.get('version_no', ''))
+    html_template = html_template.replace('{{initial_received_date}}', item.get('datintreceived', ''))
+    html_template = html_template.replace('{{latest_received_date}}', item.get('datreceived', ''))
+    html_template = html_template.replace('{{source_of_report}}', item.get('source_eng', ''))
+    html_template = html_template.replace('{{market_authorization_holder_aer_number}}', item.get('mah_no', ''))
+    html_template = html_template.replace('{{type_of_report}}', item.get('report_type_eng', ''))
+    html_template = html_template.replace('{{reporter_type}}', item.get('reporter_type_eng', ''))
+    # Replacing Serious Report
+    html_template = html_template.replace('{{serious}}', item.get('seriousness_eng', ''))
+
+    # Replace side-table (death, disability, etc.)
+    html_template = html_template.replace('{{death}}', item.get('death', ''))
+    html_template = html_template.replace('{{disability}}', item.get('disability', ''))
+    html_template = html_template.replace('{{anomaly}}', item.get('congenital_anomaly', ''))
+    html_template = html_template.replace('{{life_threatening}}', item.get('life_threatening', ''))
+    html_template = html_template.replace('{{hospitalization}}', item.get('hospitalization', ''))
+    html_template = html_template.replace('{{other_conditions}}', item.get('other_medically_imp_cond', ''))
+
+    # Patient info
+    html_template = html_template.replace('{{age}}', item.get('age', '') + ' ' + item.get('age_unit_eng', ''))
+    html_template = html_template.replace('{{gender}}', item.get('gender_eng', ''))
+    html_template = html_template.replace('{{height}}', item.get('height', '') + ' ' + item.get('height_unit_eng', ''))
+    html_template = html_template.replace('{{weight}}', item.get('weight', '') + ' ' + item.get('weight_unit_eng', ''))
+    html_template = html_template.replace('{{report_outcome}}', item.get('outcome_eng', ''))
+    html_template = html_template.replace('{{record_type}}', item.get('record_type_eng', ''))
+    html_template = html_template.replace('{{link_aer_number}}', item.get('report_link_no', ''))
+
+    # Format product rows to prevent nesting
+    product_rows = ""
+    # Find the maximum length of the product-related lists
+    max_length = max(len(formatted_data[key]) for key in
+                     ['drug_name', 'drug_involvement', 'dosage_form', 'route', 'dose', 'freq_time', 'therapy_duration',
+                      'indication'])
+
+    # Iterate over the maximum length, ensuring we don't exceed the index range of any list
+    for i in range(max_length):
+        drug_name = formatted_data['drug_name'][i] if i < len(formatted_data['drug_name']) else ""
+        drug_involvement = formatted_data['drug_involvement'][i] if i < len(formatted_data['drug_involvement']) else ""
+        dosage_form = formatted_data['dosage_form'][i] if i < len(formatted_data['dosage_form']) else ""
+        route = formatted_data['route'][i] if i < len(formatted_data['route']) else ""
+        dose = formatted_data['dose'][i] if i < len(formatted_data['dose']) else ""
+        freq_time = formatted_data['freq_time'][i] if i < len(formatted_data['freq_time']) else ""
+        therapy_duration = formatted_data['therapy_duration'][i] if i < len(formatted_data['therapy_duration']) else ""
+        indication = formatted_data['indication'][i] if i < len(formatted_data['indication']) else ""
+
+        # Add a row for the product information
+        product_rows += f"<tr><td>{drug_name}</td><td>{drug_involvement}</td><td>{dosage_form}</td><td>{route}</td><td>{dose}</td><td>{freq_time}</td><td>{therapy_duration}</td><td>{indication}</td></tr>"
+
+    if not product_rows.strip():
+        product_rows = "<tr><td colspan='8'>No product data available</td></tr>"
+
+    html_template = html_template.replace('{{product_description}}', product_rows)
+
+    # Format adverse reaction rows
+    adverse_reaction_rows = ""
+    for i in range(len(formatted_data['pt_name'])):
+        adverse_reaction_rows += f"<tr><td>{formatted_data['pt_name'][i]}</td><td>{formatted_data['meddra_version'][i]}</td><td>{formatted_data['duration'][i]} {formatted_data['duration_unit'][i]}</td></tr>"
+
+    if not adverse_reaction_rows.strip():
+        adverse_reaction_rows = "<tr><td colspan='3'>No adverse reaction data available</td></tr>"
+
+    html_template = html_template.replace('{{adverse_reaction_terms}}', adverse_reaction_rows)
+
+    return html_template
 
 
 def format_data(item):
@@ -83,102 +142,73 @@ def format_data(item):
     }
 
     fields['dose'] = [format_combined_values(qty, unit) for qty, unit in zip(fields['unit_dose'], fields['dose_unit'])]
-    fields['therapy_duration'] = [format_combined_values(dur, unit) for dur, unit in zip(fields['therapy_duration'], fields['therapy_unit'])]
+    fields['therapy_duration'] = [format_combined_values(dur, unit) for dur, unit in
+                                  zip(fields['therapy_duration'], fields['therapy_unit'])]
 
     return fields
 
 
-def generate_html(data):
-    """Generate the full HTML content from the data."""
-    item = data[0]
-    formatted_data = format_data(item)
+def generate_input_html(json_data, template_html):
+    """Generate the complete input.html file that contains all reports."""
+    input_html = "<html><head><title>Adverse Event Reports</title></head><body>"
 
-    # Read the template HTML and inject the generated content
-    with open('template.html', 'r') as file:
-        html_template = file.read()
+    # Generate a section for each report
+    report_sections = []
+    for index, item in enumerate(json_data):
+        formatted_data = format_data(item)
+        html_content = generate_html_from_template(item, formatted_data, template_html)
 
-    # Replace placeholders in the HTML template with dynamic values
-    html_template = html_template.replace('{{adverse_reaction_report_number}}', item.get('report_no', ''))
-    html_template = html_template.replace('{{latest_aer_version_number}}', item.get('version_no', ''))
-    html_template = html_template.replace('{{initial_received_date}}', item.get('datintreceived', ''))
-    html_template = html_template.replace('{{latest_received_date}}', item.get('datreceived', ''))
-    html_template = html_template.replace('{{source_of_report}}', item.get('source_eng', ''))
-    html_template = html_template.replace('{{market_authorization_holder_aer_number}}', item.get('mah_no', ''))
-    html_template = html_template.replace('{{type_of_report}}', item.get('report_type_eng', ''))
-    html_template = html_template.replace('{{reporter_type}}', item.get('reporter_type_eng', ''))
-    html_template = html_template.replace('{{serious}}', item.get('seriousness_eng', ''))
+        # Add the actual content of the report with an anchor link
+        report_sections.append(
+            f'<section id="report_{item["report_no"]}">{html_content}</section>')
 
-    # Patient info
-    html_template = html_template.replace('{{age}}', item.get('age', '') + ' ' + item.get('age_unit_eng', ''))
-    html_template = html_template.replace('{{gender}}', item.get('gender_eng', ''))
-    html_template = html_template.replace('{{height}}', item.get('height', '') + ' ' + item.get('height_unit_eng', ''))
-    html_template = html_template.replace('{{weight}}', item.get('weight', '') + ' ' + item.get('weight_unit_eng', ''))
-    html_template = html_template.replace('{{report_outcome}}', item.get('outcome_eng', ''))
-    html_template = html_template.replace('{{record_type}}', item.get('record_type_eng', ''))
-    html_template = html_template.replace('{{link_aer_number}}', item.get('report_link_no', ''))
+    input_html += "\n".join(report_sections)
+    input_html += "</body></html>"
 
-    # Format product rows to prevent nesting
-    product_rows = ""
-    for i in range(len(formatted_data['drug_name'])):
-        product_row_values = [
-            formatted_data['drug_name'][i], formatted_data['drug_involvement'][i], formatted_data['dosage_form'][i],
-            formatted_data['route'][i], formatted_data['dose'][i], formatted_data['freq_time'][i],
-            formatted_data['therapy_duration'][i], formatted_data['indication'][i]
-        ]
-
-        # Add product row if there are non-empty values
-        product_rows += f"<tr><td>{formatted_data['drug_name'][i]}</td><td>{formatted_data['drug_involvement'][i]}</td><td>{formatted_data['dosage_form'][i]}</td><td>{formatted_data['route'][i]}</td><td>{formatted_data['dose'][i]}</td><td>{formatted_data['freq_time'][i]}</td><td>{formatted_data['therapy_duration'][i]}</td><td>{formatted_data['indication'][i]}</td></tr>"
-
-    # Only insert rows if there are valid product rows
-    if not product_rows.strip():
-        product_rows = "<tr><td colspan='8'>No product data available</td></tr>"
-
-    # Insert product rows into the product info section
-    html_template = html_template.replace('{{product_description}}', product_rows)
-
-    # Skip placeholders and empty values in the adverse reaction table
-    adverse_reaction_rows = ""
-    for i in range(len(formatted_data['pt_name'])):
-        adverse_reaction_values = [
-            formatted_data['pt_name'][i], formatted_data['meddra_version'][i], formatted_data['duration'][i],
-            formatted_data['duration_unit'][i]
-        ]
-
-        if any(v.strip() not in ["", "{{meddra_version}}", "{{reaction_duration}}"] for v in adverse_reaction_values):
-            adverse_reaction_rows += f"<tr><td>{formatted_data['pt_name'][i]}</td><td>{formatted_data['meddra_version'][i]}</td><td>{formatted_data['duration'][i]} {formatted_data['duration_unit'][i]}</td></tr>"
-
-    if not adverse_reaction_rows.strip():
-        adverse_reaction_rows = "<tr><td colspan='3'>No adverse reaction data available</td></tr>"
-
-    html_template = html_template.replace('{{adverse_reaction_terms}}', adverse_reaction_rows)
-
-    # Remove unnecessary placeholders from the HTML template
-    placeholders_to_remove = [
-        "{{health_product_role}}", "{{dosage_form}}", "{{route_of_administration}}",
-        "{{dose}}", "{{frequency}}", "{{therapy_duration}}", "{{indication}}",
-        "{{meddra_version}}", "{{reaction_duration}}"
-    ]
-    for placeholder in placeholders_to_remove:
-        html_template = html_template.replace(placeholder, '')
-
-    # Return the final HTML content
-    return html_template
+    return input_html
 
 
-
-def upload_html_to_s3(html_content):
-    """Upload the generated HTML to an S3 bucket."""
-    # Initialize boto3 client
+def upload_html_to_s3(html_content, bucket_name, file_name):
+    """Upload the generated HTML content to S3 bucket."""
     s3_client = boto3.client('s3')
-
-    # Specify the file name and S3 bucket info
-    file_name = 'input-html/input.html'
-    bucket_name = 'cvp-2-bucket'
-
-    # Upload the HTML file to the S3 bucket
-    s3_client.put_object(Body=html_content, Bucket=bucket_name, Key=file_name)
+    s3_client.put_object(Body=html_content, Bucket=bucket_name, Key=file_name, ContentType='text/html')
 
 
-# Calling the functions
-html_content = generate_html(json_data)
-upload_html_to_s3(html_content)
+def main():
+    # S3 bucket details
+    input_bucket = 'cvp-2-output'  # Bucket containing the report_output directory
+    output_bucket = 'cvp-2-bucket'  # Bucket to upload the generated HTML
+    directory = 'report_output/'  # Directory in the input bucket containing the JSON files
+    output_html_file_key = 'input-html/input.html'  # Path in the output bucket where the file will be uploaded
+
+    # Load the latest JSON data from S3
+    json_data = load_json_from_s3(input_bucket, directory)
+
+    if json_data:
+        try:
+            # Load the template file from the Lambda deployment package
+            with open('template.html', 'r') as template_file:
+                template_html = template_file.read()
+
+        except Exception as e:
+            logger.error(f"Error loading template HTML: {e}")
+            return {'statusCode': 500, 'body': 'Failed to load template HTML'}
+
+        input_html = generate_input_html(json_data, template_html)
+
+        upload_html_to_s3(input_html, output_bucket, output_html_file_key)
+        logger.info(f"HTML content successfully uploaded to {output_bucket}/{output_html_file_key}")
+        return {'statusCode': 200, 'body': 'HTML content successfully uploaded'}
+    else:
+        logger.error("Failed to load JSON data from S3.")
+        return {'statusCode': 500, 'body': 'Failed to load JSON data from S3'}
+
+
+def lambda_handler(event, context):
+    """Lambda handler function."""
+    try:
+        result = main()
+        return result
+    except Exception as e:
+        logger.error(f"Error in lambda handler: {e}")
+        return {'statusCode': 500, 'body': f"Error: {str(e)}"}
