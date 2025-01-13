@@ -6,24 +6,29 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import io
+import os
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Initialize S3 client
 s3_client = boto3.client('s3')
+# Initialize SNS client
+sns_client = boto3.client('sns')
+# SNS topic ARN (replace with your actual topic ARN)
+sns_topic_arn = os.getenv("SNS_TOPIC_ARN")
 
 # Input and output S3 buckets
-input_bucket = 'cvp-2-bucket'
-output_bucket = 'cvp-2-output'
+input_bucket = os.getenv("INPUT_BUCKET")
+output_bucket = os.getenv("OUTPUT_BUCKET")
 
 # File paths in S3
-drug_names_file = 'Input_data/Suspected_Product_Brand_Name/drug_names.txt'
-report_drug_file = 'Input_data/report_id_database/report_drug.txt'
-reports_file = 'Input_data/report_id_database/reports.txt'
-reactions_file = 'Input_data/report_id_database/reactions.txt'
-report_links_file = 'Input_data/report_id_database/report_links.txt'
-report_drug_indication_file = 'Input_data/report_id_database/report_drug_indication.txt'
+drug_names_file = os.getenv("DRUG_NAMES_FILE_PATH")
+report_drug_file = os.getenv("REPORT_DRUG_FILE_PATH")
+reports_file = os.getenv("REPORTS_FILE_PATH")
+reactions_file = os.getenv("REACTIONS_FILE_PATH")
+report_links_file = os.getenv("REPORT_LINKS_FILE_PATH")
+report_drug_indication_file = os.getenv("REPORT_DRUG_INDICATION_FILE_PATH")
 
 
 # Function to read files from S3
@@ -61,8 +66,9 @@ def convert_to_yes_no(value):
 # cleaning data
 def clean_string(value):
     """Removes unwanted escape sequences and extra quotes from a JSON string."""
+    if not isinstance(value, str):
+        return ""  # Return empty string if value is not a string
     return value.strip('"').replace('\\"', '')
-
 
 # Step 1: Parse drug names from file
 def parse_drug_names(file_content):
@@ -75,15 +81,16 @@ def parse_drug_names(file_content):
     logging.info(f"Parsed {len(drug_names)} unique drug names.")
     return list(drug_names)  # Convert back to list if needed
 
-
 # Step 2: Locate REPORT_IDs corresponding to drug names
 def find_report_ids(drug_names, report_drug_content):
     logging.info(f"Finding REPORT_IDs for {len(drug_names)} drug names...")
     report_ids = defaultdict(list)
+    missing_drug_names = set(drug_names)  # Start by assuming all drug names are missing
 
     # Convert the list of drug names to a set for faster lookup
     drug_names_set = set(drug_names)
 
+    # Process each line in the report
     for line in report_drug_content:
         fields = line.split('$')
         if len(fields) > 1:
@@ -94,10 +101,35 @@ def find_report_ids(drug_names, report_drug_content):
             for name in drug_names_set:
                 if name.lower() in drug_name:  # Check if the drug name is a substring of fields[3]
                     report_ids[report_id].append(fields)
+                    # If this drug name matches, remove it from the missing list
+                    if name in missing_drug_names:
+                        missing_drug_names.remove(name)
                     break  # Stop checking other drug names if a match is found
 
     logging.info(f"Found {len(report_ids)} report IDs matching the drug names.")
+
+    # If there are missing drugs, send SNS notification
+    if missing_drug_names:
+        send_missing_drug_notification(missing_drug_names)
+
     return report_ids
+
+# Function to send SNS notification about missing drugs
+def send_missing_drug_notification(missing_drug_names):
+    # Create the message body
+    header_message = "The following drugs from the provided list were not found in the report data:\n\n"
+    missing_drug_message = header_message + "\n".join(missing_drug_names)
+    
+    try:
+        # Publish to SNS
+        response = sns_client.publish(
+            TopicArn=sns_topic_arn,
+            Message=missing_drug_message,
+            Subject="Missing Drug Names Notification"
+        )
+        logging.info(f"SNS Notification sent successfully. Message ID: {response['MessageId']}")
+    except Exception as e:
+        logging.error(f"Error sending SNS notification: {e}")
 
 
 def filter_report_ids_by_source(report_ids, reports_content):
@@ -427,8 +459,8 @@ def generate_json_output(report_data):
 
     try:
         json_data = json.dumps(final_data, indent=4)
-        timestamp = time.strftime('%Y%m%d-%H%M%S')
-        output_file = f"report_output/output_data_{timestamp}.json"
+        timestamp = time.strftime('%d_%b_%Y_%H_%M_%S')
+        output_file = f"report_output/reported_adverse_reaction_{timestamp}.json"
         s3_client.put_object(Bucket=output_bucket, Key=output_file, Body=json_data)
         logging.info(f"Successfully uploaded JSON file to S3: {output_file}")
     except Exception as e:

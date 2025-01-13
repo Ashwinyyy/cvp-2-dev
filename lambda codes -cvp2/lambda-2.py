@@ -1,6 +1,29 @@
 import json
 import boto3
 import os
+import time
+from datetime import datetime
+import logging
+
+
+# Initialize the Lambda client to invoke other functions
+lambda_client = boto3.client('lambda')
+
+def invoke_cvp2_email_lambda():
+    """Invoke the CVP2_EMAIL Lambda function."""
+    try:
+        # You can pass an event or data to the second Lambda if required, modify as necessary
+        response = lambda_client.invoke(
+            FunctionName=os.getenv("FUNCTION_TO_INVOKE"),  # Replace with your function ARN
+            InvocationType="Event",  # Asynchronous invocation
+            Payload=json.dumps({"message": "Triggering CVP2_EMAIL Lambda function"})
+        )
+
+        # Log the response from Lambda invocation
+        print(f"Successfully invoked CVP2_EMAIL Lambda: {response}")
+    except Exception as e:
+        print(f"Error invoking CVP2_EMAIL Lambda: {str(e)}")
+
 
 def load_json_from_s3(bucket_name, directory):
     """Fetch the latest JSON file from the specified S3 directory."""
@@ -41,6 +64,8 @@ def split_comma_values(value):
                     "{{dose}}", "{{frequency}}", "{{therapy_duration}}", "{{indication}}",
                     "{{meddra_version}}", "{{reaction_duration}}"]
     values = [v.strip() for v in value.split(',') if v.strip() not in placeholders]
+    
+
     return values
 
 
@@ -64,6 +89,7 @@ def generate_html_from_template(item, formatted_data, template_html):
         html_template = html_template.replace('{{market_authorization_holder_aer_number}}', item.get('mah_no', ''))
         html_template = html_template.replace('{{type_of_report}}', item.get('report_type_eng', ''))
         html_template = html_template.replace('{{reporter_type}}', item.get('reporter_type_eng', ''))
+        html_template = html_template.replace('{{serious}}', item.get('seriousness_eng', ''))
 
         # Replace side-table (death, disability, etc.)
         html_template = html_template.replace('{{death}}', item.get('death', ''))
@@ -84,9 +110,7 @@ def generate_html_from_template(item, formatted_data, template_html):
 
         # Format product rows to prevent nesting
         product_rows = ""
-        max_length = max(len(formatted_data[key]) for key in
-                         ['drug_name', 'drug_involvement', 'dosage_form', 'route', 'dose', 'freq_time', 'therapy_duration',
-                          'indication'])
+        max_length = max(len(formatted_data[key]) for key in['drug_name', 'drug_involvement', 'dosage_form', 'route', 'dose', 'freq_time', 'therapy_duration', 'indication'])
 
         for i in range(max_length):
             drug_name = formatted_data['drug_name'][i] if i < len(formatted_data['drug_name']) else ""
@@ -99,7 +123,7 @@ def generate_html_from_template(item, formatted_data, template_html):
             indication = formatted_data['indication'][i] if i < len(formatted_data['indication']) else ""
 
             # Add a row for the product information
-            product_rows += f"<tr><td>{drug_name}</td><td>{drug_involvement}</td><td>{dosage_form}</td><td>{route}</td><td>{dose}</td><td>{freq_time}</td><td>{therapy_duration}</td><td>{indication}</td></tr>"
+            product_rows += f"<tr><td class='left-align'>{drug_name}</td><td>{drug_involvement}</td><td>{dosage_form}</td><td>{route}</td><td>{dose}</td><td>{freq_time}</td><td>{therapy_duration}</td><td>{indication}</td></tr>"
 
         if not product_rows.strip():
             product_rows = "<tr><td colspan='8'>No product data available</td></tr>"
@@ -109,7 +133,7 @@ def generate_html_from_template(item, formatted_data, template_html):
         # Format adverse reaction rows
         adverse_reaction_rows = ""
         for i in range(len(formatted_data['pt_name'])):
-            adverse_reaction_rows += f"<tr><td>{formatted_data['pt_name'][i]}</td><td>{formatted_data['meddra_version'][i]}</td><td>{formatted_data['duration'][i]} {formatted_data['duration_unit'][i]}</td></tr>"
+            adverse_reaction_rows += f"<tr><td class='left-align'>{formatted_data['pt_name'][i]}</td><td>{formatted_data['meddra_version'][i]}</td><td>{formatted_data['duration'][i]} {formatted_data['duration_unit'][i]}</td></tr>"
 
         if not adverse_reaction_rows.strip():
             adverse_reaction_rows = "<tr><td colspan='3'>No adverse reaction data available</td></tr>"
@@ -145,7 +169,11 @@ def format_data(item):
     fields['dose'] = [format_combined_values(qty, unit) for qty, unit in zip(fields['unit_dose'], fields['dose_unit'])]
     fields['therapy_duration'] = [format_combined_values(dur, unit) for dur, unit in
                                   zip(fields['therapy_duration'], fields['therapy_unit'])]
-
+    
+   
+    # Ensure that drug names are sorted alphabetically
+    fields['drug_name'] = sorted(fields['drug_name'])
+    fields['pt_name'] = sorted(fields['pt_name'])
     return fields
 
 
@@ -175,10 +203,11 @@ def upload_html_to_s3(html_content, bucket_name, file_name):
 def main():
     try:
         # S3 bucket details
-        input_bucket = 'cvp-2-output'  # Bucket containing the report_output directory
-        output_bucket = 'cvp-2-bucket'  # Bucket to upload the generated HTML
-        directory = 'report_output/'  # Directory in the input bucket containing the JSON files
-        output_html_file_key = 'input-html/input.html'  # Path in the output bucket where the file will be uploaded
+        input_bucket = os.getenv("INPUT_BUCKET")  # Bucket containing the report_output directory
+        output_bucket = os.getenv("OUTPUT_BUCKET")  # Bucket to upload the generated HTML
+        directory = os.getenv("DIRECTORY") # Directory in the input bucket containing the JSON files
+        timestamp = time.strftime('%d_%b_%Y_%H_%M_%S')
+        output_html_file_key = f'input-html/reported_adverse_reaction_{timestamp}.html'  # Path in the output bucket where the file will be uploaded
 
         # Load the latest JSON data from S3
         json_data = load_json_from_s3(input_bucket, directory)
@@ -195,6 +224,9 @@ def main():
             # Upload the HTML file to S3
             upload_html_to_s3(input_html, output_bucket, output_html_file_key)
             print(f"HTML content successfully uploaded to {output_bucket}/{output_html_file_key}")
+            # Now invoke the CVP2_EMAIL Lambda after successfully completing the tasks
+            invoke_cvp2_email_lambda()  # Trigger the second Lambda function
+
         else:
             print("Failed to load JSON data from S3.")
 

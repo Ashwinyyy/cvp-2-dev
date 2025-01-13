@@ -1,198 +1,124 @@
 import json
 import boto3
+import pdfkit
+import PyPDF2
+from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
+import time
+from datetime import datetime
+import logging
+import os
+# Initialize the S3 client
+s3_client = boto3.client('s3')
 
+def get_latest_file_from_s3(bucket_name, prefix):
+    """
+    Retrieve the latest file from a specific directory in the S3 bucket.
 
-def load_json_from_s3(bucket_name, directory):
-    """Fetch the latest JSON file from the specified S3 directory."""
-    s3_client = boto3.client('s3')
-
-    # List all objects in the given directory
+    :param bucket_name: The name of the S3 bucket
+    :param prefix: The directory or folder within the bucket
+    :return: The key of the most recently modified file
+    """
     try:
-        response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=directory)
-        files = response.get('Contents', [])
+        # List objects in the S3 bucket with the specified prefix (directory)
+        response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
 
-        if not files:
-            print(f"No files found in {directory}.")
-            return None
+        # Check if there are any files in the directory
+        if 'Contents' not in response or len(response['Contents']) == 0:
+            raise Exception("No files found in the specified directory.")
 
-        # Sort files by last modified date, descending order
-        files.sort(key=lambda x: x['LastModified'], reverse=True)
+        # Sort the files by 'LastModified' in descending order (most recent first)
+        files = sorted(response['Contents'], key=lambda x: x['LastModified'], reverse=True)
 
-        # Get the most recent file
-        latest_file = files[0]['Key']
-        print(f"Latest file: {latest_file}")
-
-        # Fetch the latest file from S3
-        file_obj = s3_client.get_object(Bucket=bucket_name, Key=latest_file)
-        file_content = file_obj['Body'].read().decode('utf-8')
-
-        # Parse JSON content
-        json_data = json.loads(file_content)
-        return json_data
+        # Get the most recently modified file's key
+        latest_file_key = files[0]['Key']
+        return latest_file_key
 
     except Exception as e:
-        print(f"Error loading JSON from S3: {e}")
+        print(f"Error retrieving the latest file: {str(e)}")
         return None
 
+def lambda_handler(event, context):
+    # Source S3 bucket and key for the input HTML
+    input_bucket_name = os.getenv("INPUT_BUCKET")  # Replace with your input bucket name
+    input_html_prefix = os.getenv("INPUT_HTML_PREFIX")  # Directory or folder in the S3 bucket
+    timestamp = time.strftime('%d_%b_%Y_%H_%M_%S')
+    # Destination S3 bucket and key for the generated PDF
+    output_bucket_name = os.getenv("OUTPUT_BUCKET")  # Replace with your output bucket name
+    output_pdf_key = f'output-pdf/reported_adverse_reaction_{timestamp}.pdf'  # Path in the bucket where the PDF will be stored
 
-def split_comma_values(value):
-    """Helper function to split comma-separated values and remove placeholders."""
-    placeholders = ["{{health_product_role}}", "{{dosage_form}}", "{{route_of_administration}}",
-                    "{{dose}}", "{{frequency}}", "{{therapy_duration}}", "{{indication}}",
-                    "{{meddra_version}}", "{{reaction_duration}}"]
-    values = [v.strip() for v in value.split(',') if v.strip() not in placeholders]
-    return values
+    # Path to the wkhtmltopdf binary
+    wkhtmltopdf_path = os.getenv("WKHTMLTOPDF_PATH")  # Adjust this path as needed (use Lambda Layer for wkhtmltopdf)
 
+    try:
+        # Get the key of the latest HTML file in the specified directory
+        input_html_key = get_latest_file_from_s3(input_bucket_name, input_html_prefix)
 
-def format_combined_values(quantity, unit):
-    """Combine quantity and unit into a single string."""
-    return f"{quantity} {unit}" if quantity and unit else ""
+        # If no file is found, return an error
+        if not input_html_key:
+            return {
+                'statusCode': 500,
+                'body': json.dumps("No files found in the specified S3 folder.")
+            }
+        # Fetch the HTML file from the S3 bucket
+        response = s3_client.get_object(Bucket=input_bucket_name, Key=input_html_key)
+        html_content = response['Body'].read().decode('utf-8')  # Decode the content to string
 
+        # Split the HTML content wherever a new <html> tag appears
+        html_parts = html_content.split('<html>')
 
-def generate_html_from_template(item, formatted_data):
-    """Generate HTML content for one report."""
-    # Read the template HTML from local directory
-    with open('template.html', 'r') as file:
-        html_template = file.read()
+        # Ensure each part is reconstructed properly
+        formatted_html_parts = [f"<html>{part.strip()}" for part in html_parts if part.strip()]
 
-    # Replace placeholders in the HTML template with dynamic values
-    html_template = html_template.replace('{{adverse_reaction_report_number}}', item.get('report_no', ''))
-    html_template = html_template.replace('{{latest_aer_version_number}}', item.get('version_no', ''))
-    html_template = html_template.replace('{{initial_received_date}}', item.get('datintreceived', ''))
-    html_template = html_template.replace('{{latest_received_date}}', item.get('datreceived', ''))
-    html_template = html_template.replace('{{source_of_report}}', item.get('source_eng', ''))
-    html_template = html_template.replace('{{market_authorization_holder_aer_number}}', item.get('mah_no', ''))
-    html_template = html_template.replace('{{type_of_report}}', item.get('report_type_eng', ''))
-    html_template = html_template.replace('{{reporter_type}}', item.get('reporter_type_eng', ''))
+        # Add page breaks between parts
+        html_with_page_breaks = "<html>".join(
+            [f'{part}<div style="page-break-after: always;"></div>' for part in formatted_html_parts]
+        )
 
-    # Replace side-table (death, disability, etc.)
-    html_template = html_template.replace('{{death}}', item.get('death', ''))
-    html_template = html_template.replace('{{disability}}', item.get('disability', ''))
-    html_template = html_template.replace('{{anomaly}}', item.get('congenital_anomaly', ''))
-    html_template = html_template.replace('{{life_threatening}}', item.get('life_threatening', ''))
-    html_template = html_template.replace('{{hospitalization}}', item.get('hospitalization', ''))
-    html_template = html_template.replace('{{other_conditions}}', item.get('other_medically_imp_cond', ''))
+        # Specify the wkhtmltopdf executable in pdfkit configuration
+        config = pdfkit.configuration(wkhtmltopdf=wkhtmltopdf_path)
 
-    # Patient info
-    html_template = html_template.replace('{{age}}', item.get('age', '') + ' ' + item.get('age_unit_eng', ''))
-    html_template = html_template.replace('{{gender}}', item.get('gender_eng', ''))
-    html_template = html_template.replace('{{height}}', item.get('height', '') + ' ' + item.get('height_unit_eng', ''))
-    html_template = html_template.replace('{{weight}}', item.get('weight', '') + ' ' + item.get('weight_unit_eng', ''))
-    html_template = html_template.replace('{{report_outcome}}', item.get('outcome_eng', ''))
-    html_template = html_template.replace('{{record_type}}', item.get('record_type_eng', ''))
-    html_template = html_template.replace('{{link_aer_number}}', item.get('report_link_no', ''))
+        options = {
+            'orientation': 'Landscape',
+            'page-size': 'A4'
+        }
 
-    # Format product rows to prevent nesting
-    product_rows = ""
-    # Find the maximum length of the product-related lists
-    max_length = max(len(formatted_data[key]) for key in
-                     ['drug_name', 'drug_involvement', 'dosage_form', 'route', 'dose', 'freq_time', 'therapy_duration',
-                      'indication'])
+        # Function to generate PDF from a string (HTML)
+        def generate_pdf_from_html(html_string):
+            return pdfkit.from_string(html_string, False, configuration=config, options=options)
 
-    # Iterate over the maximum length, ensuring we don't exceed the index range of any list
-    for i in range(max_length):
-        drug_name = formatted_data['drug_name'][i] if i < len(formatted_data['drug_name']) else ""
-        drug_involvement = formatted_data['drug_involvement'][i] if i < len(formatted_data['drug_involvement']) else ""
-        dosage_form = formatted_data['dosage_form'][i] if i < len(formatted_data['dosage_form']) else ""
-        route = formatted_data['route'][i] if i < len(formatted_data['route']) else ""
-        dose = formatted_data['dose'][i] if i < len(formatted_data['dose']) else ""
-        freq_time = formatted_data['freq_time'][i] if i < len(formatted_data['freq_time']) else ""
-        therapy_duration = formatted_data['therapy_duration'][i] if i < len(formatted_data['therapy_duration']) else ""
-        indication = formatted_data['indication'][i] if i < len(formatted_data['indication']) else ""
+        # Use ThreadPoolExecutor to handle HTML parts concurrently
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            pdf_parts = list(executor.map(generate_pdf_from_html, formatted_html_parts))
 
-        # Add a row for the product information
-        product_rows += f"<tr><td>{drug_name}</td><td>{drug_involvement}</td><td>{dosage_form}</td><td>{route}</td><td>{dose}</td><td>{freq_time}</td><td>{therapy_duration}</td><td>{indication}</td></tr>"
+        # Initialize PyPDF2 PdfMerger
+        pdf_merger = PyPDF2.PdfMerger()
 
-    if not product_rows.strip():
-        product_rows = "<tr><td colspan='8'>No product data available</td></tr>"
+        # Merge each PDF part into the final PDF
+        for pdf_part in pdf_parts:
+            pdf_reader = PyPDF2.PdfReader(BytesIO(pdf_part))
+            pdf_merger.append(pdf_reader)
 
-    html_template = html_template.replace('{{product_description}}', product_rows)
+        # Write the combined PDF to a BytesIO object
+        combined_pdf = BytesIO()
+        pdf_merger.write(combined_pdf)
+        combined_pdf.seek(0)  # Reset the stream position
 
-    # Format adverse reaction rows
-    adverse_reaction_rows = ""
-    for i in range(len(formatted_data['pt_name'])):
-        adverse_reaction_rows += f"<tr><td>{formatted_data['pt_name'][i]}</td><td>{formatted_data['meddra_version'][i]}</td><td>{formatted_data['duration'][i]} {formatted_data['duration_unit'][i]}</td></tr>"
+        # Upload the merged PDF to the S3 bucket
+        s3_client.put_object(
+            Bucket=output_bucket_name,
+            Key=output_pdf_key,
+            Body=combined_pdf,
+            ContentType='application/pdf'
+        )
 
-    if not adverse_reaction_rows.strip():
-        adverse_reaction_rows = "<tr><td colspan='3'>No adverse reaction data available</td></tr>"
+        return {
+            'statusCode': 200,
+            'body': json.dumps(f"PDF generated and uploaded to S3 at {output_pdf_key}")
+        }
 
-    html_template = html_template.replace('{{adverse_reaction_terms}}', adverse_reaction_rows)
-
-    return html_template
-
-
-def format_data(item):
-    """Formats the data and handles comma-separated values."""
-    fields = {
-        'drug_name': split_comma_values(item.get('drug_name', '')),
-        'drug_involvement': split_comma_values(item.get('drug_involvement', '')),
-        'dosage_form': split_comma_values(item.get('dosage_form_eng', '')),
-        'route': split_comma_values(item.get('route_admin', '')),
-        'unit_dose': split_comma_values(item.get('unit_dose_qty', '')),
-        'dose_unit': split_comma_values(item.get('dose_unit_eng', '')),
-        'freq_time': split_comma_values(item.get('freq_time_unit_eng', '')),
-        'therapy_duration': split_comma_values(item.get('therapy_duration', '')),
-        'therapy_unit': split_comma_values(item.get('therapy_duration_unit_eng', '')),
-        'indication': split_comma_values(item.get('indication_eng', '')),
-        'pt_name': split_comma_values(item.get('pt_name_eng', '')),
-        'meddra_version': split_comma_values(item.get('meddra_version', '')),
-        'duration': split_comma_values(item.get('duration', '')),
-        'duration_unit': split_comma_values(item.get('duration_unit_eng', '')),
-    }
-
-    fields['dose'] = [format_combined_values(qty, unit) for qty, unit in zip(fields['unit_dose'], fields['dose_unit'])]
-    fields['therapy_duration'] = [format_combined_values(dur, unit) for dur, unit in
-                                  zip(fields['therapy_duration'], fields['therapy_unit'])]
-
-    return fields
-
-
-def generate_input_html(json_data):
-    """Generate the complete input.html file that contains all reports."""
-    input_html = "<html><head><title>Adverse Event Reports</title></head><body>"
-
-    # Generate a section for each report
-    report_sections = []
-    for index, item in enumerate(json_data):
-        formatted_data = format_data(item)
-        html_content = generate_html_from_template(item, formatted_data)
-
-        # Add the actual content of the report with an anchor link
-        report_sections.append(
-            f'<section id="report_{item["report_no"]}">{html_content}</section>')
-
-    input_html += "\n".join(report_sections)
-    input_html += "</body></html>"
-
-    return input_html
-
-
-def upload_html_to_s3(html_content, bucket_name, file_name):
-    """Upload the generated HTML content to S3 bucket."""
-    s3_client = boto3.client('s3')
-    s3_client.put_object(Body=html_content, Bucket=bucket_name, Key=file_name, ContentType='text/html')
-
-
-def main():
-    # S3 bucket details
-    input_bucket = 'cvp-2-output'  # Bucket containing the report_output directory
-    output_bucket = 'cvp-2-bucket'  # Bucket to upload the generated HTML
-    directory = 'report_output/'  # Directory in the input bucket containing the JSON files
-    output_html_file_key = 'input-html/input.html'  # Path in the output bucket where the file will be uploaded
-
-    # Load the latest JSON data from S3
-    json_data = load_json_from_s3(input_bucket, directory)
-
-    if json_data:
-        # Generate the input HTML
-        input_html = generate_input_html(json_data)
-
-        # Upload the HTML file to S3
-        upload_html_to_s3(input_html, output_bucket, output_html_file_key)
-        print(f"HTML content successfully uploaded to {output_bucket}/{output_html_file_key}")
-    else:
-        print("Failed to load JSON data from S3.")
-
-
-if __name__ == "__main__":
-    main()
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'body': json.dumps(f"Error generating PDF: {str(e)}")
+        }
