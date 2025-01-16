@@ -1,0 +1,417 @@
+<html>
+
+<head>
+    <style>
+        /* General Page Styles */
+
+        @page {
+            size: A4;
+            margin: 20mm;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 10px;
+            /* Smaller font size for general content */
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        h1,
+        h2 {
+            text-align: center;
+            margin: 8px 0;
+            font-size: 16px;
+            /* Reduced font size for headers */
+        }
+
+        .black-line {
+            border-top: 2px solid black;
+            /* Thinner line */
+            margin: 12px 0;
+        }
+
+        .top-right-corner {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+            display: grid;
+            grid-template-columns: auto auto;
+            column-gap: 12px;
+        }
+
+        .top-right-corner p {
+            margin: 0;
+            font-size: 10px;
+            /* Reduced font size */
+        }
+
+        .top-right-corner .heading {
+            font-weight: bold;
+            font-size: 10px;
+            /* Reduced font size */
+        }
+
+        .top-right-corner .value {
+            text-align: right;
+            font-size: 15px;
+            /* Reduced font size */
+        }
+
+        /* Table Styles */
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+            table-layout: fixed;
+            font-size: 12px;
+            /* Larger font size for content inside tables */
+        }
+
+        th,
+        td {
+            border: 1px solid black;
+            padding: 5px;
+            /* Padding for better spacing */
+            text-align: center;
+            word-wrap: break-word;
+        }
+
+        /* Darker grey background for table headers */
+
+        th {
+            background-color: #A9A9A9;
+            /* Darker grey for table headers */
+            color: black;
+            /* black text inside table headers for contrast */
+            font-weight: bold;
+        }
+
+        .section-heading {
+            font-weight: bold;
+            padding: 4px 6px;
+            text-align: left;
+            border: 1px solid black;
+            margin: 0;
+            display: inline-block;
+            font-size: 10px;
+            /* Smaller font size */
+            margin-bottom: 0;
+        }
+
+        .center {
+            text-align: center;
+        }
+
+        .left {
+            text-align: left;
+        }
+
+        .left-align {
+            text-align: left !important;
+        }
+
+        .product-description,
+        .adverse-reaction-terms {
+            text-align: left;
+        }
+
+        .side-tables {
+            width: 100%;
+            table-layout: fixed;
+            margin-top: 16px;
+            overflow: hidden;
+            /* Clear the float */
+        }
+
+        .serious-table {
+            width: 20%;
+            /* Make the Serious table smaller */
+            border-collapse: collapse;
+            table-layout: fixed;
+            float: left;
+            /* Float this table to the left */
+            /* display: inline-block; */
+            margin-right: 10px;
+            /* Space between tables */
+        }
+
+        .side-table {
+            width: 75%;
+            /* Make the Side table wider */
+            border-collapse: collapse;
+            table-layout: auto;
+            float: right;
+            /* Float this table to the right */
+            /* display: inline-block; */
+        }
+
+        .serious-table th,
+        .side-table th,
+        .serious-table td,
+        .side-table td {
+            border: 1px solid black;
+            padding: 5px;
+            text-align: center;
+            word-wrap: break-word;
+        }
+
+        .side-table td:nth-child(odd),
+        .side-table th:nth-child(odd) {
+            text-align: right;
+            width: 180px;
+            /* Reduced width for odd columns */
+        }
+
+        .side-table td:nth-child(even),
+        .side-table th:nth-child(even) {
+            width: 25px;
+            /* Reduced width for even columns */
+        }
+
+        /* Target the last column ("Other Medically Important Conditions") specifically */
+
+        .side-table td:nth-child(5),
+        /* Adjusted index for the 6th column */
+
+        .side-table th:nth-child(5) {
+            /* Adjusted index for the 6th column header */
+            width: 300px;
+            /* Increase the width for this column */
+        }
+
+        .additional-text {
+            font-weight: normal;
+            font-size: 10px;
+            /* Smaller font size */
+            margin-left: 12px;
+            display: inline-block;
+        }
+
+        /* Ensure thead does not repeat on new page */
+
+        thead {
+            display: table-header-group;
+            page-break-inside: avoid;
+        }
+
+        tbody,
+        tr {
+            page-break-inside: avoid;
+        }
+
+        table {
+            page-break-inside: auto;
+        }
+
+        /* Add page breaks between sections */
+
+        .section-heading {
+            page-break-before: always;
+        }
+
+        /* Page Numbers - Footer */
+
+        .page-number {
+            position: fixed;
+            bottom: 10mm;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 10px;
+            /* Smaller font size for page numbers */
+        }
+
+        /* Styles for page number in print */
+
+        @media print {
+            body {
+                font-size: 9px;
+                /* Slightly smaller font size for printing */
+                margin: 0;
+            }
+            .top-right-corner {
+                display: none;
+            }
+            table {
+                page-break-before: always;
+            }
+            .serious-table,
+            .side-table {
+                width: 100%;
+            }
+            .product-info,
+            .adverse-reaction-terms {
+                width: 100%;
+            }
+            .product-description {
+                word-wrap: break-word;
+                max-width: 100%;
+            }
+            body {
+                zoom: 100%;
+            }
+            /* Adding footer page number in print */
+            .page-number {
+                position: fixed;
+                bottom: 10mm;
+                left: 50%;
+                transform: translateX(-50%);
+            }
+            /* Footer page numbers for the document */
+            @page {
+                margin-bottom: 20mm;
+            }
+        }
+    </style>
+</head>
+
+
+<body>
+    <h1>Canada Vigilance</h1>
+    <h2>Summary of Reported Adverse Reactions</h2>
+    <div class="black-line"></div>
+    <div class="section-heading"> Report Information </div>
+    <span class="additional-text">***AER = Adverse Reaction Report</span>
+    <table class="centered-content">
+        <thead>
+            <tr>
+                <th>Adverse Reaction Report Number</th>
+                <th>Latest AER Version Number</th>
+                <th>Initial Received Date</th>
+                <th>Latest Received Date</th>
+                <th>Source of Report</th>
+                <th>Market Authorization Holder AER Number</th>
+                <th>Type of Report</th>
+                <th>Reporter Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>{{adverse_reaction_report_number}}</td>
+                <td>{{latest_aer_version_number}}</td>
+                <td class="value">{{initial_received_date}}</td>
+                <td class="value">{{latest_received_date}}</td>
+                <td>{{source_of_report}}</td>
+                <td>{{market_authorization_holder_aer_number}}</td>
+                <td>{{type_of_report}}</td>
+                <td>{{reporter_type}}</td>
+            </tr>
+        </tbody>
+    </table>
+    <!-- New Section with Tables (Serious Report) -->
+    <div class="side-tables">
+        <!-- Serious Report Table -->
+        <table class="serious-table">
+            <thead>
+                <tr>
+                    <th>Serious Report</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>{{serious}}</td>
+                </tr>
+            </tbody>
+        </table>
+        <!-- Detailed Side Table -->
+        <table class="side-table">
+            <thead>
+                <tr>
+                    <th>Death</th>
+                    <td>{{death}}</td>
+                    <th>Disability</th>
+                    <td>{{disability}}</td>
+                    <th>Congenital Anomaly</th>
+                    <td>{{anomaly}}</td>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <th>Life Threatening</th>
+                    <td>{{life_threatening}}</td>
+                    <th>Hospitalization</th>
+                    <td>{{hospitalization}}</td>
+                    <th>Other Medically Important Conditions</th>
+                    <td>{{other_conditions}}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+
+    <div class="section-heading">Patient Information</div>
+    <table class="centered-content">
+        <thead>
+            <tr>
+                <th>Age</th>
+                <th>Gender</th>
+                <th>Height</th>
+                <th>Weight</th>
+                <th style="width: 40%;">Report Outcome</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>{{age}}</td>
+                <td>{{gender}}</td>
+                <td class="value">{{height}}</td>
+                <td class="value">{{weight}}</td>
+                <td>{{report_outcome}}</td>
+            </tr>
+        </tbody>
+    </table>
+    <div class="section-heading">Link / Duplicate Report Information</div>
+    <table class="centered-content">
+        <thead>
+            <tr>
+                <th>Record Type</th>
+                <th>Link AER Number</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>{{record_type}}</td>
+                <td>{{link_aer_number}}</td>
+            </tr>
+        </tbody>
+    </table>
+    <div class="section-heading">Product Information</div>
+    <table class="product-info">
+        <!-- <thead> -->
+        <tr>
+            <th>Product Description</th>
+            <th>Health Product Role</th>
+            <th>Dosage Form</th>
+            <th>Route of Administration</th>
+            <th>Dose</th>
+            <th>Frequency</th>
+            <th>Therapy Duration</th>
+            <th>Indication(s)</th>
+        </tr>
+        <!-- </thead> -->
+        <tbody>
+            <!--            <tr>-->
+            {{product_description}}
+            <!--            </tr>-->
+        </tbody>
+    </table>
+    <div class="section-heading">Adverse Reaction Term Information</div>
+    <table>
+        <!-- <thead> -->
+        <tr>
+            <th>Adverse Reaction Term(s)</th>
+            <th>MedDRA Version</th>
+            <th>Reaction Duration</th>
+        </tr>
+        <!-- </thead> -->
+        <tbody>
+            {{adverse_reaction_terms}}
+        </tbody>
+    </table>
+
+</body>
+
+</html>

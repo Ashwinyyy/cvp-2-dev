@@ -56,9 +56,9 @@ def convert_date_format(date_str):
 # coverting 1 to yes, 2 to no
 def convert_to_yes_no(value):
     if value == "1":
-        return "yes"
+        return "Yes"
     elif value == "2":
-        return "no"
+        return "No"
     else:
         return value  # In case there are other values, return the original value
 
